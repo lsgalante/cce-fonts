@@ -5,7 +5,8 @@ use glyphon::{FontSystem, Buffer, Metrics, Attrs};
 use clear_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use clear_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Widget,
-    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider
+    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
+    Paginator
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +57,7 @@ enum AppMessage {
 
 struct TypefaceApp {
     // Sidebar
-    btn_browse: Button,
-    btn_keys: Button,
+    paginator: Paginator,
 
     // Browse panel
     search_box: TextBox,
@@ -243,11 +243,7 @@ impl TypefaceApp {
         let font_system = &mut self.font_system;
 
         // 1. Sidebar Page Buttons
-        self.btn_browse.prepare_text(font_system);
-        labels.extend(self.btn_browse.text_labels());
-
-        self.btn_keys.prepare_text(font_system);
-        labels.extend(self.btn_keys.text_labels());
+        labels.extend(self.paginator.text_labels());
 
         // Sidebar Logo / Title
         labels.push(TextLabel {
@@ -579,8 +575,12 @@ impl Application for TypefaceApp {
     type Message = AppMessage;
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
-        let btn_browse = Button::new(12.0, 50.0, 176.0, 32.0).with_label("🔤 Browse").with_selected(true);
-        let btn_keys = Button::new(12.0, 90.0, 176.0, 32.0).with_label("⌨ Keys");
+        let mut paginator = Paginator::new(200.0, vec![
+            "🔤 Browse".to_string(),
+            "⌨ Keys".to_string(),
+        ]);
+        paginator.tabs_rotated = false;
+        paginator.tabs_at_top = false;
 
         let mut search_box = TextBox::new(String::new()).with_multiline(false).with_draw_bg_border(true);
         search_box.font_size = 12.0;
@@ -599,8 +599,7 @@ impl Application for TypefaceApp {
 
         let all_fonts = pages::fetch_fonts();
         let mut app = Self {
-            btn_browse,
-            btn_keys,
+            paginator,
             search_box,
             font_list,
             font_buttons: Vec::new(),
@@ -663,8 +662,11 @@ impl Application for TypefaceApp {
             }
             AppMessage::SwitchPage(page) => {
                 self.current_page = page;
-                self.btn_browse.selected = page == Page::Browse;
-                self.btn_keys.selected = page == Page::Keybindings;
+                let page_idx = match page {
+                    Page::Browse => 0,
+                    Page::Keybindings => 1,
+                };
+                self.paginator.set_selected_page(page_idx);
                 *needs_rebuild = true;
                 self.needs_rebuild = true;
             }
@@ -750,7 +752,12 @@ impl Application for TypefaceApp {
         }
     }
 
-    fn tick(&mut self, _dt: f32, _needs_rebuild: &mut bool) {}
+    fn tick(&mut self, dt: f32, needs_rebuild: &mut bool) {
+        if self.paginator.tick(dt) {
+            *needs_rebuild = true;
+            self.needs_rebuild = true;
+        }
+    }
 
     fn view(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, size: LogicalSize, scale: f64) {
         let size_changed = self.width != size.width as u32 || self.height != size.height as u32 || self.scale_factor != scale;
@@ -760,8 +767,8 @@ impl Application for TypefaceApp {
             self.scale_factor = scale;
 
             // Set coordinates of permanent widgets
-            self.btn_browse.set_rect(12.0, 50.0, 176.0, 32.0);
-            self.btn_keys.set_rect(12.0, 90.0, 176.0, 32.0);
+            self.paginator.set_scale_factor(scale as f32);
+            self.paginator.set_rect(0.0, 40.0, 200.0, self.height as f32 - 70.0);
 
             if self.current_page == Page::Browse {
                 // Search box
@@ -817,9 +824,8 @@ impl Application for TypefaceApp {
         quads.push((0.0, status_y, w_f32, 30.0, [0.086, 0.141, 0.094, 1.0]));
         quads.push((0.0, status_y, w_f32, 1.0, [0.18, 0.28, 0.20, 1.0])); // status separator
 
-        // Draw permanent buttons
-        quads.extend(self.btn_browse.extra_quads());
-        quads.extend(self.btn_keys.extra_quads());
+        // Draw paginator sidebar
+        quads.extend(self.paginator.extra_quads());
 
         // 5. Page Content
         if self.current_page == Page::Browse {
@@ -912,8 +918,9 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        if self.btn_browse.on_cursor_moved(px, py) { changed = true; }
-        if self.btn_keys.on_cursor_moved(px, py) { changed = true; }
+        if px < 200.0 {
+            if self.paginator.cursor_moved(px, py) { changed = true; }
+        }
 
         if self.current_page == Page::Browse {
             if self.search_box.on_cursor_moved(px, py) { changed = true; }
@@ -947,17 +954,19 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        // Permanent buttons
-        if self.btn_browse.mouse_input(button, state, px, py) {
-            changed = true;
-            if state == ElementState::Released && self.btn_browse.take_click() {
-                msg_out = Some(AppMessage::SwitchPage(Page::Browse));
-            }
-        }
-        if self.btn_keys.mouse_input(button, state, px, py) {
-            changed = true;
-            if state == ElementState::Released && self.btn_keys.take_click() {
-                msg_out = Some(AppMessage::SwitchPage(Page::Keybindings));
+        // Paginator sidebar
+        if px < 200.0 {
+            if self.paginator.mouse_input(button, state, px, py) {
+                changed = true;
+                if self.paginator.take_click() {
+                    let new_page = self.paginator.selected_page();
+                    let target_page = match new_page {
+                        0 => Page::Browse,
+                        1 => Page::Keybindings,
+                        _ => Page::Browse,
+                    };
+                    msg_out = Some(AppMessage::SwitchPage(target_page));
+                }
             }
         }
 
@@ -1036,7 +1045,11 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        if self.current_page == Page::Browse {
+        if px < 200.0 {
+            if self.paginator.mouse_wheel(delta, px, py) {
+                changed = true;
+            }
+        } else if self.current_page == Page::Browse {
             if self.font_list.mouse_wheel(delta, px, py) {
                 changed = true;
             }
