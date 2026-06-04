@@ -576,8 +576,8 @@ impl Application for TypefaceApp {
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
         let mut paginator = Paginator::new(56.0, vec![
-            "🔤 Browse".to_string(),
-            "⌨ Keys".to_string(),
+            "Browse".to_string(),
+            "Keys".to_string(),
         ]);
         paginator.tabs_rotated = true;
         paginator.tabs_at_top = false;
