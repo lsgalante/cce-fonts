@@ -274,7 +274,7 @@ impl TypefaceApp {
                 
                 labels.push(TextLabel {
                     text: format!("{} families", self.filtered.len()),
-                    x: 220.0,
+                    x: 76.0,
                     y: 84.0,
                     font_size: 11.0,
                     color: [0x88, 0x88, 0x99],
@@ -292,7 +292,7 @@ impl TypefaceApp {
                 if let Some(ref family) = self.selected_family {
                     labels.push(TextLabel {
                         text: family.clone(),
-                        x: 502.0,
+                        x: 358.0,
                         y: 70.0,
                         font_size: 14.0,
                         color: [0x8f, 0xd4, 0x8f],
@@ -300,7 +300,7 @@ impl TypefaceApp {
 
                     labels.push(TextLabel {
                         text: "Style:".to_string(),
-                        x: 502.0,
+                        x: 358.0,
                         y: 112.0,
                         font_size: 12.0,
                         color: [0x88, 0x88, 0x99],
@@ -322,7 +322,7 @@ impl TypefaceApp {
 
                     labels.push(TextLabel {
                         text: format!("Size: {:.0}pt", self.size_slider.get_scaled_value()),
-                        x: 502.0,
+                        x: 358.0,
                         y: 152.0,
                         font_size: 12.0,
                         color: [0x88, 0x88, 0x99],
@@ -386,8 +386,8 @@ impl TypefaceApp {
                         weight_val,
                     );
                     self.text_items.push(TextItem {
-                        buffer: preview_text_buffer_clamped(preview_buf, font_system, 360.0),
-                        x: 512.0,
+                        buffer: preview_text_buffer_clamped(preview_buf, font_system, 504.0),
+                        x: 368.0,
                         y: 242.0,
                         color: glyphon::Color::rgb(0xd4, 0xd4, 0xd4),
                     });
@@ -403,8 +403,8 @@ impl TypefaceApp {
                         weight_val,
                     );
                     self.text_items.push(TextItem {
-                        buffer: preview_text_buffer_clamped(alph_buf, font_system, 360.0),
-                        x: 512.0,
+                        buffer: preview_text_buffer_clamped(alph_buf, font_system, 504.0),
+                        x: 368.0,
                         y: 432.0,
                         color: glyphon::Color::rgb(0x88, 0x88, 0x99),
                     });
@@ -412,7 +412,7 @@ impl TypefaceApp {
                 } else {
                     labels.push(TextLabel {
                         text: "Select a font from Browse to preview it here".to_string(),
-                        x: 512.0,
+                        x: 368.0,
                         y: 242.0,
                         font_size: 14.0,
                         color: [0x88, 0x88, 0x99],
@@ -575,11 +575,11 @@ impl Application for TypefaceApp {
     type Message = AppMessage;
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
-        let mut paginator = Paginator::new(200.0, vec![
+        let mut paginator = Paginator::new(56.0, vec![
             "🔤 Browse".to_string(),
             "⌨ Keys".to_string(),
         ]);
-        paginator.tabs_rotated = false;
+        paginator.tabs_rotated = true;
         paginator.tabs_at_top = false;
 
         let mut search_box = TextBox::new(String::new()).with_multiline(false).with_draw_bg_border(true);
@@ -766,16 +766,15 @@ impl Application for TypefaceApp {
             self.height = size.height as u32;
             self.scale_factor = scale;
 
-            // Set coordinates of permanent widgets
             self.paginator.set_scale_factor(scale as f32);
-            self.paginator.set_rect(0.0, 40.0, 200.0, self.height as f32 - 70.0);
+            self.paginator.set_rect(0.0, 40.0, 56.0, self.height as f32 - 70.0);
 
             if self.current_page == Page::Browse {
                 // Search box
-                self.search_box.set_rect(220.0, 50.0, 250.0, 26.0);
+                self.search_box.set_rect(76.0, 50.0, 250.0, 26.0);
 
                 // Scrolling List
-                let list_x = 220.0;
+                let list_x = 76.0;
                 let list_y = 100.0;
                 let list_w = 250.0;
                 let list_h = (self.height as f32 - 140.0).max(100.0);
@@ -792,9 +791,9 @@ impl Application for TypefaceApp {
                 }
 
                 // Preview panel widgets
-                self.style_dropdown.set_rect(550.0, 100.0, 180.0, 26.0);
-                self.size_slider.set_rect(600.0, 140.0, 180.0, 20.0);
-                self.preview_box.set_rect(502.0, 180.0, 380.0, 30.0);
+                self.style_dropdown.set_rect(406.0, 100.0, 180.0, 26.0);
+                self.size_slider.set_rect(456.0, 140.0, 180.0, 20.0);
+                self.preview_box.set_rect(358.0, 180.0, 524.0, 30.0);
 
                 // Details panel buttons
                 self.btn_open_folder.set_rect(914.0, 240.0, 110.0, 28.0);
@@ -812,8 +811,8 @@ impl Application for TypefaceApp {
         quads.push((0.0, 0.0, w_f32, h_f32, [0.102, 0.165, 0.110, 1.0]));
 
         // 2. Sidebar background panel
-        quads.push((0.0, 40.0, 200.0, h_f32 - 70.0, [0.086, 0.141, 0.094, 1.0]));
-        quads.push((200.0, 40.0, 1.0, h_f32 - 70.0, [0.18, 0.28, 0.20, 1.0])); // sidebar separator
+        quads.push((0.0, 40.0, 56.0, h_f32 - 70.0, [0.086, 0.141, 0.094, 1.0]));
+        quads.push((56.0, 40.0, 1.0, h_f32 - 70.0, [0.18, 0.28, 0.20, 1.0])); // sidebar separator
 
         // 3. Header quads
         quads.push((0.0, 0.0, w_f32, 40.0, [0.086, 0.141, 0.094, 1.0]));
@@ -831,11 +830,11 @@ impl Application for TypefaceApp {
         if self.current_page == Page::Browse {
             // Draw panel separators / borders
             // Left Panel (Browse list background)
-            quads.push((210.0, 50.0, 270.0, h_f32 - 90.0, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((210.0, 50.0, 270.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((210.0, 50.0 + h_f32 - 90.0, 270.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((210.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((480.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((66.0, 50.0, 270.0, h_f32 - 90.0, [0.086, 0.141, 0.094, 1.0]));
+            quads.push((66.0, 50.0, 270.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((66.0, 50.0 + h_f32 - 90.0, 270.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((66.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((336.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
 
             // Search box
             quads.extend(self.search_box.extra_quads());
@@ -851,10 +850,10 @@ impl Application for TypefaceApp {
             }
 
             // Middle Panel (Preview)
-            quads.push((492.0, 50.0, 400.0, h_f32 - 90.0, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((492.0, 50.0, 400.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((492.0, 50.0 + h_f32 - 90.0, 400.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((492.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((348.0, 50.0, 544.0, h_f32 - 90.0, [0.086, 0.141, 0.094, 1.0]));
+            quads.push((348.0, 50.0, 544.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((348.0, 50.0 + h_f32 - 90.0, 544.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((348.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
             quads.push((892.0, 50.0, 1.0, h_f32 - 90.0, [0.18, 0.28, 0.20, 1.0]));
 
             if self.selected_family.is_some() {
@@ -866,16 +865,16 @@ impl Application for TypefaceApp {
                 quads.extend(self.preview_box.extra_quads());
 
                 // Preview areas (frosted/darkened background inside panel)
-                quads.push((502.0, 230.0, 380.0, 180.0, [0.078, 0.133, 0.086, 1.0])); // preview box bg
-                quads.push((502.0, 230.0, 380.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((502.0, 410.0, 380.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((502.0, 230.0, 1.0, 180.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((358.0, 230.0, 524.0, 180.0, [0.078, 0.133, 0.086, 1.0])); // preview box bg
+                quads.push((358.0, 230.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((358.0, 410.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((358.0, 230.0, 1.0, 180.0, [0.15, 0.25, 0.17, 1.0]));
                 quads.push((882.0, 230.0, 1.0, 180.0, [0.15, 0.25, 0.17, 1.0]));
 
-                quads.push((502.0, 420.0, 380.0, 120.0, [0.078, 0.133, 0.086, 1.0])); // alphabet box bg
-                quads.push((502.0, 420.0, 380.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((502.0, 540.0, 380.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((502.0, 420.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((358.0, 420.0, 524.0, 120.0, [0.078, 0.133, 0.086, 1.0])); // alphabet box bg
+                quads.push((358.0, 420.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((358.0, 540.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((358.0, 420.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
                 quads.push((882.0, 420.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
             }
 
@@ -918,7 +917,7 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        if px < 200.0 {
+        if px < 56.0 {
             if self.paginator.cursor_moved(px, py) { changed = true; }
         }
 
@@ -955,7 +954,7 @@ impl Application for TypefaceApp {
         let py = pos.y as f32;
 
         // Paginator sidebar
-        if px < 200.0 {
+        if px < 56.0 {
             if self.paginator.mouse_input(button, state, px, py) {
                 changed = true;
                 if self.paginator.take_click() {
@@ -1045,7 +1044,7 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        if px < 200.0 {
+        if px < 56.0 {
             if self.paginator.mouse_wheel(delta, px, py) {
                 changed = true;
             }
