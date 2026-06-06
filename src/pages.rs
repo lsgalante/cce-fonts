@@ -21,10 +21,12 @@ pub fn fetch_fonts() -> Vec<FontEntry> {
         .filter_map(|line| {
             let parts: Vec<&str> = line.splitn(3, '\t').collect();
             if parts.len() == 3 {
+                let family = parts[0].split(',').next().unwrap_or(parts[0]).trim().to_string();
+                let style = parts[1].split(',').next().unwrap_or(parts[1]).trim().to_string();
                 Some(FontEntry {
-                    family: parts[0].to_string(),
-                    style: parts[1].to_string(),
-                    file: parts[2].to_string(),
+                    family,
+                    style,
+                    file: parts[2].trim().to_string(),
                 })
             } else {
                 None

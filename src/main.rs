@@ -73,6 +73,13 @@ struct TypefaceApp {
     btn_open_folder: Button,
     btn_remove_font: Button,
 
+    // Selection mode buttons
+    select_cancel_btn: Button,
+    select_confirm_btn: Button,
+    select_mode: bool,
+    last_click_idx: Option<usize>,
+    click_timer: f32,
+
     // State
     current_page: Page,
     all_fonts: Vec<pages::FontEntry>,
@@ -173,6 +180,7 @@ impl TypefaceApp {
 
     fn select_family(&mut self, family: String) {
         self.selected_family = Some(family.clone());
+        self.preview_box.font_family = family.clone();
         
         // Find styles and files
         let entries: Vec<&pages::FontEntry> = self.all_fonts.iter().filter(|f| f.family == family).collect();
@@ -240,6 +248,15 @@ impl TypefaceApp {
         let mut labels = Vec::new();
         let font_system = &mut self.font_system;
 
+        let w_f32 = self.width as f32;
+        let h_f32 = self.height as f32;
+        let left_panel_x = 66.0;
+        let left_panel_w = 270.0;
+        let right_panel_w = 286.0;
+        let right_panel_x = w_f32 - 10.0 - right_panel_w;
+        let mid_panel_x = left_panel_x + left_panel_w + 12.0;
+        let mid_panel_w = right_panel_x - 12.0 - mid_panel_x;
+
         // 1. Sidebar Page Buttons
         labels.extend(self.paginator.text_labels());
 
@@ -248,7 +265,7 @@ impl TypefaceApp {
             Page::Browse => {
                 // Left Panel (Browse List)
                 self.search_box.prepare_text(font_system);
-                for label in self.search_box.text_labels() {
+                for (label, bounds) in self.search_box.text_labels_with_bounds() {
                     let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
                     let mut buf = Buffer::new(font_system, metrics);
                     buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
@@ -258,12 +275,13 @@ impl TypefaceApp {
                         x: label.x,
                         y: label.y,
                         color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
+                        bounds,
                     });
                 }
                 
                 labels.push(TextLabel {
                     text: format!("{} families", self.filtered.len()),
-                    x: 76.0,
+                    x: left_panel_x + 10.0,
                     y: 44.0,
                     font_size: 11.0,
                     color: [0x88, 0x88, 0x99],
@@ -281,22 +299,14 @@ impl TypefaceApp {
                 if let Some(ref family) = self.selected_family {
                     labels.push(TextLabel {
                         text: family.clone(),
-                        x: 358.0,
+                        x: mid_panel_x + 10.0,
                         y: 30.0,
                         font_size: 14.0,
                         color: [0x8f, 0xd4, 0x8f],
                     });
 
-                    labels.push(TextLabel {
-                        text: "Style:".to_string(),
-                        x: 358.0,
-                        y: 72.0,
-                        font_size: 12.0,
-                        color: [0x88, 0x88, 0x99],
-                    });
-
                     self.style_dropdown.prepare_text(font_system);
-                    for label in self.style_dropdown.text_labels() {
+                    for (label, bounds) in self.style_dropdown.text_labels_with_bounds() {
                         let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
                         let mut buf = Buffer::new(font_system, metrics);
                         buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
@@ -306,19 +316,12 @@ impl TypefaceApp {
                             x: label.x,
                             y: label.y,
                             color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
+                            bounds,
                         });
                     }
 
-                    labels.push(TextLabel {
-                        text: format!("Size: {:.0}pt", self.size_slider.get_scaled_value()),
-                        x: 358.0,
-                        y: 112.0,
-                        font_size: 12.0,
-                        color: [0x88, 0x88, 0x99],
-                    });
-
                     self.size_slider.prepare_text(font_system);
-                    for label in self.size_slider.text_labels() {
+                    for (label, bounds) in self.size_slider.text_labels_with_bounds() {
                         let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
                         let mut buf = Buffer::new(font_system, metrics);
                         buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
@@ -328,26 +331,13 @@ impl TypefaceApp {
                             x: label.x,
                             y: label.y,
                             color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
+                            bounds,
                         });
                     }
 
                     self.preview_box.prepare_text(font_system);
-                    for label in self.preview_box.text_labels() {
-                        let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
-                        let mut buf = Buffer::new(font_system, metrics);
-                        buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
-                        buf.shape_until_scroll(font_system, true);
-                        self.text_items.push(TextItem {
-                            buffer: buf,
-                            x: label.x,
-                            y: label.y,
-                            color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
-                        });
-                    }
-
-                    // Render Custom Font Preview text into text_items!
-                    let font_size = self.size_slider.get_scaled_value();
                     let font_family = self.selected_family.as_deref();
+                    let font_size = self.size_slider.get_scaled_value();
                     
                     let mut style_val = None;
                     let mut weight_val = None;
@@ -365,21 +355,29 @@ impl TypefaceApp {
                         }
                     }
 
-                    let preview_text = if self.preview_box.editing { &self.preview_box.edit_buffer } else { &self.preview_box.text };
-                    let preview_buf = make_text_buffer_with_font(
-                        font_system,
-                        preview_text,
-                        font_size,
-                        font_family,
-                        style_val,
-                        weight_val,
-                    );
-                    self.text_items.push(TextItem {
-                        buffer: preview_text_buffer_clamped(preview_buf, font_system, 504.0),
-                        x: 368.0,
-                        y: 202.0,
-                        color: glyphon::Color::rgb(0xd4, 0xd4, 0xd4),
-                    });
+                    for (label, bounds) in self.preview_box.text_labels_with_bounds() {
+                        let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
+                        let mut buf = Buffer::new(font_system, metrics);
+                        let mut attrs = Attrs::new();
+                        if let Some(f_name) = font_family {
+                            attrs = attrs.family(glyphon::Family::Name(f_name));
+                        }
+                        if let Some(s) = style_val {
+                            attrs = attrs.style(s);
+                        }
+                        if let Some(w) = weight_val {
+                            attrs = attrs.weight(w);
+                        }
+                        buf.set_text(font_system, &label.text, attrs, glyphon::Shaping::Advanced);
+                        buf.shape_until_scroll(font_system, true);
+                        self.text_items.push(TextItem {
+                            buffer: buf,
+                            x: label.x,
+                            y: label.y,
+                            color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
+                            bounds,
+                        });
+                    }
 
                     // Alphabet preview
                     let alphabet_text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n!@#$%^&*()_+-=[]{}|;':\",./<>";
@@ -392,16 +390,17 @@ impl TypefaceApp {
                         weight_val,
                     );
                     self.text_items.push(TextItem {
-                        buffer: preview_text_buffer_clamped(alph_buf, font_system, 504.0),
-                        x: 368.0,
+                        buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
+                        x: mid_panel_x + 20.0,
                         y: 392.0,
                         color: glyphon::Color::rgb(0x88, 0x88, 0x99),
+                        bounds: None,
                     });
 
                 } else {
                     labels.push(TextLabel {
                         text: "Select a font from Browse to preview it here".to_string(),
-                        x: 368.0,
+                        x: mid_panel_x + 20.0,
                         y: 202.0,
                         font_size: 14.0,
                         color: [0x88, 0x88, 0x99],
@@ -412,7 +411,7 @@ impl TypefaceApp {
                 if self.style_dropdown.open && self.selected_family.is_some() {
                     let mut pc = clear_ui::layout::PopoverCollector::new();
                     self.style_dropdown.render_popover(&mut pc);
-                    for (content, size, tx, ty, color, _font) in pc.texts {
+                    for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
                         let color_u8 = [
                             (color[0] * 255.0).clamp(0.0, 255.0) as u8,
                             (color[1] * 255.0).clamp(0.0, 255.0) as u8,
@@ -432,7 +431,7 @@ impl TypefaceApp {
                 if self.selected_family.is_some() {
                     labels.push(TextLabel {
                         text: "Font Details".to_string(),
-                        x: 914.0,
+                        x: right_panel_x + 10.0,
                         y: 30.0,
                         font_size: 18.0,
                         color: [0x5c, 0x90, 0x60],
@@ -447,11 +446,11 @@ impl TypefaceApp {
                         file_str.clone()
                     };
 
-                    labels.push(TextLabel { text: format!("Family:  {}", family_str), x: 914.0, y: 70.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("Style:   {}", style_str), x: 914.0, y: 95.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("File:    {}", file_display), x: 914.0, y: 120.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("Glyphs:  {}", self.charset_str), x: 914.0, y: 145.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("Loc:     {}", if self.is_user_font { "User" } else { "System" }), x: 914.0, y: 170.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
+                    labels.push(TextLabel { text: format!("Family:  {}", family_str), x: right_panel_x + 10.0, y: 70.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
+                    labels.push(TextLabel { text: format!("Style:   {}", style_str), x: right_panel_x + 10.0, y: 95.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
+                    labels.push(TextLabel { text: format!("File:    {}", file_display), x: right_panel_x + 10.0, y: 120.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
+                    labels.push(TextLabel { text: format!("Glyphs:  {}", self.charset_str), x: right_panel_x + 10.0, y: 145.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
+                    labels.push(TextLabel { text: format!("Loc:     {}", if self.is_user_font { "User" } else { "System" }), x: right_panel_x + 10.0, y: 170.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
 
                     self.btn_open_folder.prepare_text(font_system);
                     labels.extend(self.btn_open_folder.text_labels());
@@ -461,7 +460,7 @@ impl TypefaceApp {
                 } else {
                     labels.push(TextLabel {
                         text: "Select a font from Browse to see details".to_string(),
-                        x: 914.0,
+                        x: right_panel_x + 10.0,
                         y: 30.0,
                         font_size: 13.0,
                         color: [0x88, 0x88, 0x99],
@@ -528,6 +527,31 @@ impl TypefaceApp {
             }
         }
 
+        if self.select_mode {
+            let bar_y = h_f32 - 48.0 - 10.0;
+            labels.push(TextLabel {
+                text: "Selected Font:".to_string(),
+                x: left_panel_x + 10.0,
+                y: bar_y + 18.0,
+                font_size: 12.0,
+                color: [0x5c, 0x90, 0x60],
+            });
+
+            let font_name = self.selected_family.clone().unwrap_or_else(|| "None".to_string());
+            labels.push(TextLabel {
+                text: font_name,
+                x: left_panel_x + 110.0,
+                y: bar_y + 18.0,
+                font_size: 12.0,
+                color: [0xdd, 0xdd, 0xe2],
+            });
+
+            self.select_cancel_btn.prepare_text(font_system);
+            labels.extend(self.select_cancel_btn.text_labels());
+            self.select_confirm_btn.prepare_text(font_system);
+            labels.extend(self.select_confirm_btn.text_labels());
+        }
+
         // Convert TextLabels to text_items
         for label in labels {
             let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
@@ -539,6 +563,7 @@ impl TypefaceApp {
                 x: label.x,
                 y: label.y,
                 color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
+                bounds: None,
             });
         }
     }
@@ -555,6 +580,11 @@ impl Application for TypefaceApp {
     type Message = AppMessage;
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
+        clear_ui::scale::set_scale_factor(1.0);
+        // Parse command line arguments
+        let args: Vec<String> = std::env::args().collect();
+        let select_mode = args.iter().any(|arg| arg == "--select");
+
         let mut paginator = Paginator::new(56.0, vec![
             "Browse".to_string(),
             "Keys".to_string(),
@@ -567,15 +597,18 @@ impl Application for TypefaceApp {
 
         let font_list = ScrollingList::new(24.0, 4.0);
 
-        let style_dropdown = Dropdown::new(Vec::new(), 0);
+        let style_dropdown = Dropdown::new(Vec::new(), 0).with_label("Style:");
 
-        let size_slider = Slider::new().with_range(8.0, 120.0).with_value((32.0 - 8.0) / (120.0 - 8.0)).with_readout(true);
+        let size_slider = Slider::new().with_range(8.0, 120.0).with_value((32.0 - 8.0) / (120.0 - 8.0)).with_readout(true).with_label("Size:");
 
-        let mut preview_box = TextBox::new(String::from("The quick brown fox jumps over the lazy dog")).with_multiline(false).with_draw_bg_border(true);
-        preview_box.font_size = 12.0;
+        let mut preview_box = TextBox::new(String::from("The quick brown fox jumps over the lazy dog")).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
+        preview_box.font_size = 32.0;
 
         let btn_open_folder = Button::new(914.0, 200.0, 110.0, 28.0).with_label("Open Folder");
         let btn_remove_font = Button::new_reset(1034.0, 200.0, 110.0, 28.0).with_label("Remove Font");
+
+        let select_cancel_btn = Button::new_reset(0.0, 0.0, 80.0, 28.0).with_label("Cancel");
+        let select_confirm_btn = Button::new(0.0, 0.0, 80.0, 28.0).with_label("Select");
 
         let all_fonts = pages::fetch_fonts();
         let mut app = Self {
@@ -588,6 +621,11 @@ impl Application for TypefaceApp {
             preview_box,
             btn_open_folder,
             btn_remove_font,
+            select_cancel_btn,
+            select_confirm_btn,
+            select_mode,
+            last_click_idx: None,
+            click_timer: 0.0,
             current_page: Page::Browse,
             all_fonts: all_fonts.clone(),
             families: Vec::new(),
@@ -601,8 +639,8 @@ impl Application for TypefaceApp {
             charset_count: 0,
             charset_str: String::from("0"),
             is_user_font: false,
-            width: 1200,
-            height: 720,
+            width: if select_mode { 900 } else { 1200 },
+            height: if select_mode { 500 } else { 720 },
             scale_factor: 1.0,
             text_items: Vec::new(),
             font_system: FontSystem::new(),
@@ -624,13 +662,24 @@ impl Application for TypefaceApp {
     }
 
     fn settings(&self) -> WindowSettings {
-        WindowSettings {
-            title: "Clear Typeface Interface".to_string(),
-            app_id: "clear-typeface-interface".to_string(),
-            width: 1200,
-            height: 720,
-            fullscreen: false,
-            min_size: Some((800, 500)),
+        if self.select_mode {
+            WindowSettings {
+                title: "Select Font".to_string(),
+                app_id: "clear-typeface-select".to_string(),
+                width: 900,
+                height: 500,
+                fullscreen: false,
+                min_size: Some((800, 400)),
+            }
+        } else {
+            WindowSettings {
+                title: "Clear Typeface Interface".to_string(),
+                app_id: "clear-typeface-interface".to_string(),
+                width: 1200,
+                height: 720,
+                fullscreen: false,
+                min_size: Some((800, 500)),
+            }
         }
     }
 
@@ -674,6 +723,7 @@ impl Application for TypefaceApp {
                 }
             }
             AppMessage::FontSizeChanged => {
+                self.preview_box.font_size = self.size_slider.get_scaled_value();
                 *needs_rebuild = true;
                 self.needs_rebuild = true;
             }
@@ -732,6 +782,9 @@ impl Application for TypefaceApp {
     }
 
     fn tick(&mut self, dt: f32, needs_rebuild: &mut bool) {
+        if self.click_timer > 0.0 {
+            self.click_timer -= dt;
+        }
         if self.paginator.tick(dt) {
             *needs_rebuild = true;
             self.needs_rebuild = true;
@@ -744,19 +797,39 @@ impl Application for TypefaceApp {
             self.width = size.width as u32;
             self.height = size.height as u32;
             self.scale_factor = scale;
+        }
 
-            self.paginator.set_scale_factor(scale as f32);
-            self.paginator.set_rect(0.0, 0.0, 56.0, self.height as f32);
+        let w_f32 = self.width as f32;
+        let h_f32 = self.height as f32;
+
+        let sidebar_w = self.paginator.sidebar_w();
+        let left_panel_x = sidebar_w + 10.0;
+        let left_panel_w = 270.0;
+        let right_panel_w = 286.0;
+        let right_panel_x = w_f32 - 10.0 - right_panel_w;
+        let mid_panel_x = left_panel_x + left_panel_w + 12.0;
+        let mid_panel_w = right_panel_x - 12.0 - mid_panel_x;
+
+        let select_bar_h = 48.0;
+        let content_h = if self.select_mode {
+            (h_f32 - 20.0 - select_bar_h).max(100.0)
+        } else {
+            (h_f32 - 20.0).max(100.0)
+        };
+
+        if self.needs_rebuild || size_changed {
+            clear_ui::scale::set_scale_factor(scale as f32);
+            self.paginator.set_rect(0.0, 0.0, sidebar_w, h_f32);
 
             if self.current_page == Page::Browse {
                 // Search box
-                self.search_box.set_rect(76.0, 10.0, 250.0, 26.0);
+                self.search_box.set_rect(left_panel_x + 10.0, 10.0, left_panel_w - 20.0, 26.0);
 
                 // Scrolling List
-                let list_x = 76.0;
+                let list_x = left_panel_x + 10.0;
                 let list_y = 60.0;
-                let list_w = 250.0;
-                let list_h = (self.height as f32 - 70.0).max(100.0);
+                let list_w = left_panel_w - 20.0;
+                let list_h = (content_h - 50.0).max(100.0);
                 self.font_list.set_rect(list_x, list_y, list_w, list_h);
                 self.font_list.update_bounds(self.filtered.len(), list_y, list_h);
 
@@ -770,28 +843,31 @@ impl Application for TypefaceApp {
                 }
 
                 // Preview panel widgets
-                self.style_dropdown.set_rect(406.0, 60.0, 180.0, 26.0);
-                self.size_slider.set_rect(456.0, 100.0, 180.0, 20.0);
-                self.preview_box.set_rect(358.0, 140.0, 524.0, 30.0);
+                self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, 180.0, 26.0);
+                self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, 180.0, 20.0);
+                self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, 180.0);
 
                 // Details panel buttons
-                self.btn_open_folder.set_rect(914.0, 200.0, 110.0, 28.0);
-                self.btn_remove_font.set_rect(1034.0, 200.0, 110.0, 28.0);
+                self.btn_open_folder.set_rect(right_panel_x + 10.0, 200.0, 110.0, 28.0);
+                self.btn_remove_font.set_rect(right_panel_x + 130.0, 200.0, 110.0, 28.0);
+
+                if self.select_mode {
+                    let bar_y = h_f32 - select_bar_h - 10.0;
+                    self.select_cancel_btn.set_rect(w_f32 - 190.0, bar_y + 10.0, 80.0, 28.0);
+                    self.select_confirm_btn.set_rect(w_f32 - 100.0, bar_y + 10.0, 80.0, 28.0);
+                }
             }
 
             self.rebuild_text_items();
             self.needs_rebuild = false;
         }
 
-        let w_f32 = self.width as f32;
-        let h_f32 = self.height as f32;
-
         // 1. General window background (dark green-tinted theme)
         quads.push((0.0, 0.0, w_f32, h_f32, [0.102, 0.165, 0.110, 1.0]));
 
         // 2. Sidebar background panel
-        quads.push((0.0, 0.0, 56.0, h_f32, [0.086, 0.141, 0.094, 1.0]));
-        quads.push((56.0, 0.0, 1.0, h_f32, [0.18, 0.28, 0.20, 1.0])); // sidebar separator
+        quads.push((0.0, 0.0, sidebar_w, h_f32, [0.086, 0.141, 0.094, 1.0]));
+        quads.push((sidebar_w, 0.0, 1.0, h_f32, [0.18, 0.28, 0.20, 1.0])); // sidebar separator
 
         // Draw paginator sidebar
         quads.extend(self.paginator.extra_quads());
@@ -800,11 +876,11 @@ impl Application for TypefaceApp {
         if self.current_page == Page::Browse {
             // Draw panel separators / borders
             // Left Panel (Browse list background)
-            quads.push((66.0, 10.0, 270.0, h_f32 - 20.0, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((66.0, 10.0, 270.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((66.0, h_f32 - 10.0, 270.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((66.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((336.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((left_panel_x, 10.0, left_panel_w, content_h, [0.086, 0.141, 0.094, 1.0]));
+            quads.push((left_panel_x, 10.0, left_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((left_panel_x, 10.0 + content_h, left_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((left_panel_x, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
 
             // Search box
             quads.extend(self.search_box.extra_quads());
@@ -820,11 +896,11 @@ impl Application for TypefaceApp {
             }
 
             // Middle Panel (Preview)
-            quads.push((348.0, 10.0, 544.0, h_f32 - 20.0, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((348.0, 10.0, 544.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((348.0, h_f32 - 10.0, 544.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((348.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((892.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((mid_panel_x, 10.0, mid_panel_w, content_h, [0.086, 0.141, 0.094, 1.0]));
+            quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((mid_panel_x, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
 
             if self.selected_family.is_some() {
                 // Dropdown
@@ -835,29 +911,40 @@ impl Application for TypefaceApp {
                 quads.extend(self.preview_box.extra_quads());
 
                 // Preview areas (frosted/darkened background inside panel)
-                quads.push((358.0, 190.0, 524.0, 180.0, [0.078, 0.133, 0.086, 1.0])); // preview box bg
-                quads.push((358.0, 190.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((358.0, 370.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((358.0, 190.0, 1.0, 180.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((882.0, 190.0, 1.0, 180.0, [0.15, 0.25, 0.17, 1.0]));
+                let preview_box_x = mid_panel_x + 10.0;
+                let preview_box_w = mid_panel_w - 20.0;
 
-                quads.push((358.0, 380.0, 524.0, 120.0, [0.078, 0.133, 0.086, 1.0])); // alphabet box bg
-                quads.push((358.0, 380.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((358.0, 500.0, 524.0, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((358.0, 380.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((882.0, 380.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((preview_box_x, 380.0, preview_box_w, 120.0, [0.078, 0.133, 0.086, 1.0])); // alphabet box bg
+                quads.push((preview_box_x, 380.0, preview_box_w, 1.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((preview_box_x, 500.0, preview_box_w, 1.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((preview_box_x, 380.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
+                quads.push((preview_box_x + preview_box_w, 380.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
             }
 
             // Right Panel (Details)
-            quads.push((904.0, 10.0, 286.0, h_f32 - 20.0, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((904.0, 10.0, 286.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((904.0, h_f32 - 10.0, 286.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((904.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((1190.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((right_panel_x, 10.0, right_panel_w, content_h, [0.086, 0.141, 0.094, 1.0]));
+            quads.push((right_panel_x, 10.0, right_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((right_panel_x, 10.0 + content_h, right_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((right_panel_x, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
+            quads.push((right_panel_x + right_panel_w, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
 
             if self.selected_family.is_some() {
                 quads.extend(self.btn_open_folder.extra_quads());
                 quads.extend(self.btn_remove_font.extra_quads());
+            }
+
+            if self.select_mode {
+                let bar_y = h_f32 - select_bar_h - 10.0;
+                // Draw bottom bar background
+                quads.push((left_panel_x, bar_y, w_f32 - 76.0, 48.0, [0.086, 0.141, 0.094, 1.0]));
+                // Draw divider line
+                quads.push((left_panel_x, bar_y, w_f32 - 76.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
+                // Side borders
+                quads.push((left_panel_x, bar_y, 1.0, 48.0, [0.18, 0.28, 0.20, 1.0]));
+                quads.push((w_f32 - 10.0, bar_y, 1.0, 48.0, [0.18, 0.28, 0.20, 1.0]));
+                // Draw selection buttons
+                quads.extend(self.select_cancel_btn.extra_quads());
+                quads.extend(self.select_confirm_btn.extra_quads());
             }
         } else if self.current_page == Page::Keybindings {
             // Keybindings page background
@@ -886,8 +973,9 @@ impl Application for TypefaceApp {
         let mut changed = false;
         let px = pos.x as f32;
         let py = pos.y as f32;
-
-        if px < 56.0 {
+        let sidebar_w = self.paginator.sidebar_w();
+        
+        if px < sidebar_w {
             if self.paginator.cursor_moved(px, py) { changed = true; }
         }
 
@@ -909,6 +997,11 @@ impl Application for TypefaceApp {
                 if self.btn_open_folder.on_cursor_moved(px, py) { changed = true; }
                 if self.btn_remove_font.on_cursor_moved(px, py) { changed = true; }
             }
+
+            if self.select_mode {
+                if self.select_cancel_btn.on_cursor_moved(px, py) { changed = true; }
+                if self.select_confirm_btn.on_cursor_moved(px, py) { changed = true; }
+            }
         }
 
         if changed {
@@ -922,9 +1015,10 @@ impl Application for TypefaceApp {
         let mut msg_out = None;
         let px = pos.x as f32;
         let py = pos.y as f32;
-
+        let sidebar_w = self.paginator.sidebar_w();
+        
         // Paginator sidebar
-        if px < 56.0 {
+        if px < sidebar_w {
             if self.paginator.mouse_input(button, state, px, py) {
                 changed = true;
                 if self.paginator.take_click() {
@@ -974,6 +1068,13 @@ impl Application for TypefaceApp {
                         if btn.mouse_input(button, state, px, py) {
                             changed = true;
                             if state == ElementState::Released && btn.take_click() {
+                                if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
+                                    let selected = self.filtered[idx].clone();
+                                    print!("{}", selected);
+                                    std::process::exit(0);
+                                }
+                                self.last_click_idx = Some(idx);
+                                self.click_timer = 0.35;
                                 msg_out = Some(AppMessage::SelectFamily(idx));
                             }
                         }
@@ -998,6 +1099,23 @@ impl Application for TypefaceApp {
                         }
                     }
                 }
+
+                if self.select_mode {
+                    if self.select_cancel_btn.mouse_input(button, state, px, py) {
+                        changed = true;
+                        if state == ElementState::Released && self.select_cancel_btn.take_click() {
+                            std::process::exit(1);
+                        }
+                    }
+                    if self.select_confirm_btn.mouse_input(button, state, px, py) {
+                        changed = true;
+                        if state == ElementState::Released && self.select_confirm_btn.take_click() {
+                            let selected = self.selected_family.clone().unwrap_or_default();
+                            print!("{}", selected);
+                            std::process::exit(0);
+                        }
+                    }
+                }
             }
         }
 
@@ -1013,8 +1131,9 @@ impl Application for TypefaceApp {
         let mut changed = false;
         let px = pos.x as f32;
         let py = pos.y as f32;
-
-        if px < 56.0 {
+        let sidebar_w = self.paginator.sidebar_w();
+        
+        if px < sidebar_w {
             if self.paginator.mouse_wheel(delta, px, py) {
                 changed = true;
             }
