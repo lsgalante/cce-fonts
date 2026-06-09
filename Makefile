@@ -5,7 +5,7 @@ build:
 
 install: build
 	mkdir -p ~/.local/bin
-	install -m 755 target/release/clear-typeface-interface ~/.local/bin/clear-typeface-interface
+	install -m 755 target/release/cce-fonts ~/.local/bin/cce-fonts
 
 run:
 	cargo run

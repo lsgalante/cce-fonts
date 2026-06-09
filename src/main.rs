@@ -6,8 +6,9 @@ use clear_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, W
 use clear_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
-    Paginator
+    Paginator, Container, Plate
 };
+use clear_ui::widget::focus::link_parent_child;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -102,6 +103,14 @@ struct TypefaceApp {
     text_items: Vec<TextItem>,
     font_system: FontSystem,
     needs_rebuild: bool,
+
+    // Containers
+    page_root_container: Container,
+    left_panel: Plate,
+    mid_panel: Plate,
+    right_panel: Plate,
+    bottom_bar: Plate,
+    ui_context: clear_ui::context::UiContext,
 }
 
 fn make_text_buffer_with_font(
@@ -112,11 +121,30 @@ fn make_text_buffer_with_font(
     style: Option<glyphon::Style>,
     weight: Option<glyphon::Weight>,
 ) -> Buffer {
-    let metrics = Metrics::new(size, size * 1.4);
+    let scale = clear_ui::scale::scale_factor();
+    let mut font_size = size;
+    let mut family_name = None;
+
+    if let Some(font_str) = font {
+        let (parsed_family, parsed_size) = clear_ui::layout::parse_font_string(font_str);
+        if let Some(ps) = parsed_size {
+            font_size = ps;
+        }
+        family_name = Some(parsed_family);
+    }
+
+    let physical_size = font_size * scale;
+    let metrics = Metrics::new(physical_size, physical_size * 1.4);
     let mut buf = Buffer::new(fs, metrics);
     let mut attrs = Attrs::new();
-    if let Some(font_name) = font {
-        attrs = attrs.family(glyphon::Family::Name(font_name));
+    if let Some(ref font_family) = family_name {
+        let family = match font_family.as_str() {
+            "monospace" => glyphon::Family::Monospace,
+            "sans-serif" => glyphon::Family::SansSerif,
+            "serif" => glyphon::Family::Serif,
+            name => glyphon::Family::Name(name),
+        };
+        attrs = attrs.family(family);
     }
     if let Some(s) = style {
         attrs = attrs.style(s);
@@ -130,6 +158,57 @@ fn make_text_buffer_with_font(
 }
 
 impl TypefaceApp {
+    fn rebuild_hierarchy(&mut self) {
+        let ctx = &mut self.ui_context;
+        self.page_root_container.clear_children(ctx);
+        self.left_panel.clear_children(ctx);
+        self.mid_panel.clear_children(ctx);
+        self.right_panel.clear_children(ctx);
+        self.bottom_bar.clear_children(ctx);
+
+        // 1. Link active page-level containers to root
+        link_parent_child(&mut self.page_root_container, &mut self.paginator, ctx);
+        link_parent_child(&mut self.page_root_container, &mut self.left_panel, ctx);
+        link_parent_child(&mut self.page_root_container, &mut self.mid_panel, ctx);
+        link_parent_child(&mut self.page_root_container, &mut self.right_panel, ctx);
+        
+        if self.select_mode {
+            link_parent_child(&mut self.page_root_container, &mut self.bottom_bar, ctx);
+        }
+
+        if self.current_page == Page::Browse {
+            // Left Panel (Browse list)
+            link_parent_child(&mut self.left_panel, &mut self.search_box, ctx);
+            link_parent_child(&mut self.left_panel, &mut self.font_list, ctx);
+            
+            // Scrolling list buttons
+            for btn in &mut self.font_buttons {
+                if btn.rect().0 > -9000.0 {
+                    link_parent_child(&mut self.left_panel, btn, ctx);
+                }
+            }
+
+            // Middle Panel (Preview)
+            if self.selected_family.is_some() {
+                link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
+                link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
+                link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
+            }
+
+            // Right Panel (Details)
+            if self.selected_family.is_some() {
+                link_parent_child(&mut self.right_panel, &mut self.btn_open_folder, ctx);
+                link_parent_child(&mut self.right_panel, &mut self.btn_remove_font, ctx);
+            }
+
+            // Bottom bar
+            if self.select_mode {
+                link_parent_child(&mut self.bottom_bar, &mut self.select_cancel_btn, ctx);
+                link_parent_child(&mut self.bottom_bar, &mut self.select_confirm_btn, ctx);
+            }
+        }
+    }
+
     fn reload_fonts(&mut self) {
         self.all_fonts = pages::fetch_fonts();
         self.families = self.extract_families(&self.all_fonts);
@@ -245,316 +324,186 @@ impl TypefaceApp {
 
     fn rebuild_text_items(&mut self) {
         self.text_items.clear();
-        let mut labels = Vec::new();
         let font_system = &mut self.font_system;
 
-        let w_f32 = self.width as f32;
-        let h_f32 = self.height as f32;
-        let left_panel_x = 66.0;
-        let left_panel_w = 270.0;
-        let right_panel_w = 286.0;
-        let right_panel_x = w_f32 - 10.0 - right_panel_w;
-        let mid_panel_x = left_panel_x + left_panel_w + 12.0;
-        let mid_panel_w = right_panel_x - 12.0 - mid_panel_x;
+        // Ensure all widgets have their text prepared/shaped
+        self.paginator.prepare_text(font_system);
+        self.search_box.prepare_text(font_system);
+        self.font_list.prepare_text(font_system);
+        for btn in &mut self.font_buttons {
+            btn.prepare_text(font_system);
+        }
+        self.style_dropdown.prepare_text(font_system);
+        self.size_slider.prepare_text(font_system);
+        self.preview_box.prepare_text(font_system);
+        self.btn_open_folder.prepare_text(font_system);
+        self.btn_remove_font.prepare_text(font_system);
+        self.select_cancel_btn.prepare_text(font_system);
+        self.select_confirm_btn.prepare_text(font_system);
+
+        let mut labels = Vec::new();
 
         // 1. Sidebar Page Buttons
-        labels.extend(self.paginator.text_labels());
+        labels.extend(self.paginator.text_labels_with_bounds(&self.ui_context));
 
         // 2. Page Content
-        match self.current_page {
-            Page::Browse => {
-                // Left Panel (Browse List)
-                self.search_box.prepare_text(font_system);
-                for (label, bounds) in self.search_box.text_labels_with_bounds() {
-                    let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
-                    let mut buf = Buffer::new(font_system, metrics);
-                    buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
-                    buf.shape_until_scroll(font_system, true);
-                    self.text_items.push(TextItem {
-                        buffer: buf,
-                        x: label.x,
-                        y: label.y,
-                        color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
-                        bounds,
-                    });
-                }
-                
-                labels.push(TextLabel {
-                    text: format!("{} families", self.filtered.len()),
-                    x: left_panel_x + 10.0,
-                    y: 44.0,
-                    font_size: 11.0,
-                    color: [0x88, 0x88, 0x99],
-                });
+        if self.current_page == Page::Browse {
+            labels.extend(self.left_panel.text_labels_with_bounds(&self.ui_context));
+            labels.extend(self.mid_panel.text_labels_with_bounds(&self.ui_context));
+            labels.extend(self.right_panel.text_labels_with_bounds(&self.ui_context));
 
-                // Visible Font Buttons
-                for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                    if self.font_list.get_item_draw_y(idx, 0.0).is_some() {
-                        btn.prepare_text(font_system);
-                        labels.extend(btn.text_labels());
-                    }
-                }
+            if self.select_mode {
+                labels.extend(self.bottom_bar.text_labels_with_bounds(&self.ui_context));
+            }
 
-                // Middle Panel (Preview)
-                if let Some(ref family) = self.selected_family {
-                    labels.push(TextLabel {
-                        text: family.clone(),
-                        x: mid_panel_x + 10.0,
-                        y: 30.0,
-                        font_size: 14.0,
-                        color: [0x8f, 0xd4, 0x8f],
-                    });
-
-                    self.style_dropdown.prepare_text(font_system);
-                    for (label, bounds) in self.style_dropdown.text_labels_with_bounds() {
-                        let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
-                        let mut buf = Buffer::new(font_system, metrics);
-                        buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
-                        buf.shape_until_scroll(font_system, true);
-                        self.text_items.push(TextItem {
-                            buffer: buf,
-                            x: label.x,
-                            y: label.y,
-                            color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
-                            bounds,
-                        });
-                    }
-
-                    self.size_slider.prepare_text(font_system);
-                    for (label, bounds) in self.size_slider.text_labels_with_bounds() {
-                        let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
-                        let mut buf = Buffer::new(font_system, metrics);
-                        buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
-                        buf.shape_until_scroll(font_system, true);
-                        self.text_items.push(TextItem {
-                            buffer: buf,
-                            x: label.x,
-                            y: label.y,
-                            color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
-                            bounds,
-                        });
-                    }
-
-                    self.preview_box.prepare_text(font_system);
-                    let font_family = self.selected_family.as_deref();
-                    let font_size = self.size_slider.get_scaled_value();
-                    
-                    let mut style_val = None;
-                    let mut weight_val = None;
-                    if let Some(ref style) = self.selected_style {
-                        let sl = style.to_lowercase();
-                        if sl.contains("italic") || sl.contains("oblique") {
-                            style_val = Some(glyphon::Style::Italic);
-                        }
-                        if sl.contains("bold") {
-                            weight_val = Some(glyphon::Weight::BOLD);
-                        } else if sl.contains("light") {
-                            weight_val = Some(glyphon::Weight::LIGHT);
-                        } else if sl.contains("medium") {
-                            weight_val = Some(glyphon::Weight::MEDIUM);
-                        }
-                    }
-
-                    for (label, bounds) in self.preview_box.text_labels_with_bounds() {
-                        let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
-                        let mut buf = Buffer::new(font_system, metrics);
-                        let mut attrs = Attrs::new();
-                        if let Some(f_name) = font_family {
-                            attrs = attrs.family(glyphon::Family::Name(f_name));
-                        }
-                        if let Some(s) = style_val {
-                            attrs = attrs.style(s);
-                        }
-                        if let Some(w) = weight_val {
-                            attrs = attrs.weight(w);
-                        }
-                        buf.set_text(font_system, &label.text, attrs, glyphon::Shaping::Advanced);
-                        buf.shape_until_scroll(font_system, true);
-                        self.text_items.push(TextItem {
-                            buffer: buf,
-                            x: label.x,
-                            y: label.y,
-                            color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
-                            bounds,
-                        });
-                    }
-
-                    // Alphabet preview
-                    let alphabet_text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n!@#$%^&*()_+-=[]{}|;':\",./<>";
-                    let alph_buf = make_text_buffer_with_font(
-                        font_system,
-                        alphabet_text,
-                        (font_size * 0.55).clamp(8.0, 36.0),
-                        font_family,
-                        style_val,
-                        weight_val,
-                    );
-                    self.text_items.push(TextItem {
-                        buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
-                        x: mid_panel_x + 20.0,
-                        y: 392.0,
-                        color: glyphon::Color::rgb(0x88, 0x88, 0x99),
-                        bounds: None,
-                    });
-
-                } else {
-                    labels.push(TextLabel {
-                        text: "Select a font from Browse to preview it here".to_string(),
-                        x: mid_panel_x + 20.0,
-                        y: 202.0,
-                        font_size: 14.0,
-                        color: [0x88, 0x88, 0x99],
-                    });
-                }
-
-                // Render Dropdown popover labels if open
-                if self.style_dropdown.open && self.selected_family.is_some() {
-                    let mut pc = clear_ui::layout::PopoverCollector::new();
-                    self.style_dropdown.render_popover(&mut pc);
-                    for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
-                        let color_u8 = [
-                            (color[0] * 255.0).clamp(0.0, 255.0) as u8,
-                            (color[1] * 255.0).clamp(0.0, 255.0) as u8,
-                            (color[2] * 255.0).clamp(0.0, 255.0) as u8,
-                        ];
-                        labels.push(TextLabel {
-                            text: content,
-                            x: tx,
-                            y: ty,
-                            font_size: size,
-                            color: color_u8,
-                        });
-                    }
-                }
-
-                // Right Panel (Details)
-                if self.selected_family.is_some() {
-                    labels.push(TextLabel {
-                        text: "Font Details".to_string(),
-                        x: right_panel_x + 10.0,
-                        y: 30.0,
-                        font_size: 18.0,
-                        color: [0x5c, 0x90, 0x60],
-                    });
-
-                    let family_str = self.selected_family.clone().unwrap_or_default();
-                    let style_str = self.selected_style.clone().unwrap_or_default();
-                    let file_str = self.selected_file.clone().unwrap_or_default();
-                    let file_display = if file_str.len() > 32 {
-                        format!("...{}", &file_str[file_str.len() - 29..])
-                    } else {
-                        file_str.clone()
-                    };
-
-                    labels.push(TextLabel { text: format!("Family:  {}", family_str), x: right_panel_x + 10.0, y: 70.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("Style:   {}", style_str), x: right_panel_x + 10.0, y: 95.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("File:    {}", file_display), x: right_panel_x + 10.0, y: 120.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("Glyphs:  {}", self.charset_str), x: right_panel_x + 10.0, y: 145.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-                    labels.push(TextLabel { text: format!("Loc:     {}", if self.is_user_font { "User" } else { "System" }), x: right_panel_x + 10.0, y: 170.0, font_size: 12.0, color: [0xdd, 0xdd, 0xe2] });
-
-                    self.btn_open_folder.prepare_text(font_system);
-                    labels.extend(self.btn_open_folder.text_labels());
-
-                    self.btn_remove_font.prepare_text(font_system);
-                    labels.extend(self.btn_remove_font.text_labels());
-                } else {
-                    labels.push(TextLabel {
-                        text: "Select a font from Browse to see details".to_string(),
-                        x: right_panel_x + 10.0,
-                        y: 30.0,
-                        font_size: 13.0,
-                        color: [0x88, 0x88, 0x99],
-                    });
+            // Render Dropdown popover labels if open
+            if self.style_dropdown.open && self.selected_family.is_some() {
+                let mut pc = clear_ui::layout::PopoverCollector::new();
+                self.style_dropdown.render_popover(&mut pc);
+                for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
+                    let color_u8 = [
+                        (color[0] * 255.0).clamp(0.0, 255.0) as u8,
+                        (color[1] * 255.0).clamp(0.0, 255.0) as u8,
+                        (color[2] * 255.0).clamp(0.0, 255.0) as u8,
+                    ];
+                    labels.push((TextLabel {
+                        text: content,
+                        x: tx,
+                        y: ty,
+                        font_size: size,
+                        color: color_u8,
+                    }, None));
                 }
             }
-            Page::Keybindings => {
-                labels.push(TextLabel {
-                    text: "Keybindings".to_string(),
-                    x: 220.0,
-                    y: 30.0,
-                    font_size: 18.0,
-                    color: [0x5c, 0x90, 0x60],
-                });
 
-                let sections: [(&str, &[(&str, &str)]); 3] = [
-                    ("🧭 Navigation", &[
-                        ("Ctrl + F", "Search fonts"),
-                        ("Up / Down", "Navigate font list"),
-                        ("Enter", "Select font"),
-                        ("Ctrl + 1-2", "Switch page"),
-                    ]),
-                    ("👁 Preview", &[
-                        ("+ / -", "Increase / decrease font size"),
-                        ("Ctrl + E", "Edit preview text"),
-                    ]),
-                    ("⚡ Actions", &[
-                        ("Ctrl + O", "Open font folder"),
-                        ("Delete", "Remove user font"),
-                        ("Ctrl + R / F5", "Refresh font list"),
-                    ]),
-                ];
-
-                let mut y_offset = 70.0;
-                for (sec_title, bindings) in &sections {
-                    labels.push(TextLabel {
-                        text: sec_title.to_string(),
-                        x: 220.0,
-                        y: y_offset,
-                        font_size: 14.0,
-                        color: [0xdd, 0xdd, 0xe2],
-                    });
-                    y_offset += 24.0;
-
-                    for (keys, action) in *bindings {
-                        labels.push(TextLabel {
-                            text: keys.to_string(),
-                            x: 230.0,
-                            y: y_offset,
-                            font_size: 12.0,
-                            color: [0x5c, 0x90, 0x60],
-                        });
-                        labels.push(TextLabel {
-                            text: action.to_string(),
-                            x: 370.0,
-                            y: y_offset,
-                            font_size: 12.0,
-                            color: [0x88, 0x88, 0x99],
-                        });
-                        y_offset += 20.0;
+            // Alphabet preview
+            if let Some(ref family) = self.selected_family {
+                let font_size = self.size_slider.get_scaled_value();
+                let mut style_val = None;
+                let mut weight_val = None;
+                if let Some(ref style) = self.selected_style {
+                    let sl = style.to_lowercase();
+                    if sl.contains("italic") || sl.contains("oblique") {
+                        style_val = Some(glyphon::Style::Italic);
                     }
-                    y_offset += 16.0;
+                    if sl.contains("bold") {
+                        weight_val = Some(glyphon::Weight::BOLD);
+                    } else if sl.contains("light") {
+                        weight_val = Some(glyphon::Weight::LIGHT);
+                    } else if sl.contains("medium") {
+                        weight_val = Some(glyphon::Weight::MEDIUM);
+                    }
                 }
+
+                let alphabet_text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n!@#$%^&*()_+-=[]{}|;':\",./<>";
+                let alph_buf = make_text_buffer_with_font(
+                    font_system,
+                    alphabet_text,
+                    (font_size * 0.55).clamp(8.0, 36.0),
+                    Some(family),
+                    style_val,
+                    weight_val,
+                );
+                
+                let mid_panel_w = self.right_panel.base.x - 12.0 - self.mid_panel.base.x;
+                let preview_box_x = self.mid_panel.base.x + 10.0;
+                let preview_box_w = mid_panel_w - 20.0;
+                let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
+                let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+
+                self.text_items.push(TextItem {
+                    buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
+                    x: self.mid_panel.base.x + 20.0,
+                    y: alphabet_box_y + 12.0,
+                    color: glyphon::Color::rgb(0x88, 0x88, 0x99),
+                    bounds: Some([preview_box_x, alphabet_box_y, preview_box_x + preview_box_w, alphabet_box_y + alphabet_box_h]),
+                });
+            }
+        } else if self.current_page == Page::Keybindings {
+            labels.push((TextLabel {
+                text: "Keybindings".to_string(),
+                x: 220.0,
+                y: 30.0,
+                font_size: 18.0,
+                color: [0x5c, 0x90, 0x60],
+            }, None));
+
+            let sections: [(&str, &[(&str, &str)]); 3] = [
+                ("🧭 Navigation", &[
+                    ("Ctrl + F", "Search fonts"),
+                    ("Up / Down", "Navigate font list"),
+                    ("Enter", "Select font"),
+                    ("Ctrl + 1-2", "Switch page"),
+                ]),
+                ("👁 Preview", &[
+                    ("+ / -", "Increase / decrease font size"),
+                    ("Ctrl + E", "Edit preview text"),
+                ]),
+                ("⚡ Actions", &[
+                    ("Ctrl + O", "Open font folder"),
+                    ("Delete", "Remove user font"),
+                    ("Ctrl + R / F5", "Refresh font list"),
+                ]),
+            ];
+
+            let mut y_offset = 70.0;
+            for (sec_title, bindings) in &sections {
+                labels.push((TextLabel {
+                    text: sec_title.to_string(),
+                    x: 220.0,
+                    y: y_offset,
+                    font_size: 14.0,
+                    color: [0xdd, 0xdd, 0xe2],
+                }, None));
+                y_offset += 24.0;
+
+                for (keys, action) in *bindings {
+                    labels.push((TextLabel {
+                        text: keys.to_string(),
+                        x: 230.0,
+                        y: y_offset,
+                        font_size: 12.0,
+                        color: [0x5c, 0x90, 0x60],
+                    }, None));
+                    labels.push((TextLabel {
+                        text: action.to_string(),
+                        x: 370.0,
+                        y: y_offset,
+                        font_size: 12.0,
+                        color: [0x88, 0x88, 0x99],
+                    }, None));
+                    y_offset += 20.0;
+                }
+                y_offset += 16.0;
             }
         }
 
-        if self.select_mode {
-            let bar_y = h_f32 - 48.0 - 10.0;
-            labels.push(TextLabel {
+        if self.current_page == Page::Browse && self.select_mode {
+            let left_panel_x = self.left_panel.base.x;
+            let bar_y = self.height as f32 - 48.0 - 10.0;
+            labels.push((TextLabel {
                 text: "Selected Font:".to_string(),
                 x: left_panel_x + 10.0,
                 y: bar_y + 18.0,
                 font_size: 12.0,
                 color: [0x5c, 0x90, 0x60],
-            });
+            }, None));
 
             let font_name = self.selected_family.clone().unwrap_or_else(|| "None".to_string());
-            labels.push(TextLabel {
+            labels.push((TextLabel {
                 text: font_name,
                 x: left_panel_x + 110.0,
                 y: bar_y + 18.0,
                 font_size: 12.0,
                 color: [0xdd, 0xdd, 0xe2],
-            });
-
-            self.select_cancel_btn.prepare_text(font_system);
-            labels.extend(self.select_cancel_btn.text_labels());
-            self.select_confirm_btn.prepare_text(font_system);
-            labels.extend(self.select_confirm_btn.text_labels());
+            }, None));
         }
 
         // Convert TextLabels to text_items
-        for label in labels {
-            let metrics = Metrics::new(label.font_size, label.font_size * 1.4);
+        let scale = clear_ui::scale::scale_factor();
+        for (label, bounds) in labels {
+            let physical_size = label.font_size * scale;
+            let metrics = Metrics::new(physical_size, physical_size * 1.4);
             let mut buf = Buffer::new(font_system, metrics);
             buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
             buf.shape_until_scroll(font_system, true);
@@ -563,7 +512,7 @@ impl TypefaceApp {
                 x: label.x,
                 y: label.y,
                 color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
-                bounds: None,
+                bounds,
             });
         }
     }
@@ -599,7 +548,8 @@ impl Application for TypefaceApp {
 
         let style_dropdown = Dropdown::new(Vec::new(), 0).with_label("Style:");
 
-        let size_slider = Slider::new().with_range(8.0, 120.0).with_value((32.0 - 8.0) / (120.0 - 8.0)).with_readout(true).with_label("Size:");
+        let mut size_slider = Slider::new().with_range(8.0, 120.0).with_readout(true).with_label("Size:");
+        size_slider.set_scaled_value(32.0);
 
         let mut preview_box = TextBox::new(String::from("The quick brown fox jumps over the lazy dog")).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
         preview_box.font_size = 32.0;
@@ -645,17 +595,46 @@ impl Application for TypefaceApp {
             text_items: Vec::new(),
             font_system: FontSystem::new(),
             needs_rebuild: true,
+            page_root_container: Container::new(),
+            left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            right_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            ui_context: clear_ui::context::UiContext::new(),
         };
         
         app.families = app.extract_families(&app.all_fonts);
         app.filtered = app.filter_families(&app.families, "");
         app.font_buttons = app.filtered.iter().map(|f| Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f)).collect();
         
-        // Auto-select first font at start if available
+        // Parse preselected family and size from CLI args (passed by FontSelector)
+        let mut preselected_family = None;
+        let mut preselected_size = None;
+        if select_mode {
+            let other_args: Vec<&String> = args.iter().filter(|arg| *arg != "--select" && !arg.ends_with("cce-fonts")).collect();
+            if let Some(arg) = other_args.first() {
+                let (fam, sz) = clear_ui::layout::parse_font_string(arg);
+                preselected_family = Some(fam);
+                preselected_size = sz;
+            }
+        }
+
+        // Auto-select first font or preselected font at start if available
         if !app.filtered.is_empty() {
-            app.selected_idx = Some(0);
-            let family = app.filtered[0].clone();
+            let mut select_idx = 0;
+            if let Some(ref pre_fam) = preselected_family {
+                if let Some(pos) = app.filtered.iter().position(|f| f.to_lowercase() == pre_fam.to_lowercase()) {
+                    select_idx = pos;
+                }
+            }
+            app.selected_idx = Some(select_idx);
+            let family = app.filtered[select_idx].clone();
             app.select_family(family);
+        }
+
+        if let Some(sz) = preselected_size {
+            app.size_slider.set_scaled_value(sz);
+            app.preview_box.font_size = sz;
         }
 
         app
@@ -665,7 +644,7 @@ impl Application for TypefaceApp {
         if self.select_mode {
             WindowSettings {
                 title: "Select Font".to_string(),
-                app_id: "clear-typeface-select".to_string(),
+                app_id: "cce-fonts-select".to_string(),
                 width: 900,
                 height: 500,
                 fullscreen: false,
@@ -673,8 +652,8 @@ impl Application for TypefaceApp {
             }
         } else {
             WindowSettings {
-                title: "Clear Typeface Interface".to_string(),
-                app_id: "clear-typeface-interface".to_string(),
+                title: "CCE Fonts".to_string(),
+                app_id: "cce-fonts".to_string(),
                 width: 1200,
                 height: 720,
                 fullscreen: false,
@@ -785,7 +764,7 @@ impl Application for TypefaceApp {
         if self.click_timer > 0.0 {
             self.click_timer -= dt;
         }
-        if self.paginator.tick(dt) {
+        if self.paginator.tick(dt, &mut self.ui_context) {
             *needs_rebuild = true;
             self.needs_rebuild = true;
         }
@@ -812,7 +791,7 @@ impl Application for TypefaceApp {
 
         let select_bar_h = 48.0;
         let content_h = if self.select_mode {
-            (h_f32 - 20.0 - select_bar_h).max(100.0)
+            (h_f32 - 30.0 - select_bar_h).max(100.0)
         } else {
             (h_f32 - 20.0).max(100.0)
         };
@@ -820,6 +799,20 @@ impl Application for TypefaceApp {
         if self.needs_rebuild || size_changed {
             clear_ui::scale::set_scale_factor(scale as f32);
             self.paginator.set_rect(0.0, 0.0, sidebar_w, h_f32);
+
+            // Position panel Plates
+            self.left_panel.set_rect(left_panel_x, 10.0, left_panel_w, content_h);
+            self.mid_panel.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
+            self.right_panel.set_rect(right_panel_x, 10.0, right_panel_w, content_h);
+
+            let bar_y = h_f32 - select_bar_h - 10.0;
+            self.bottom_bar.set_rect(left_panel_x, bar_y, w_f32 - 76.0, select_bar_h);
+
+            // Configure Plate visibility
+            self.left_panel.visible = self.current_page == Page::Browse;
+            self.mid_panel.visible = self.current_page == Page::Browse;
+            self.right_panel.visible = self.current_page == Page::Browse;
+            self.bottom_bar.visible = self.current_page == Page::Browse && self.select_mode;
 
             if self.current_page == Page::Browse {
                 // Search box
@@ -843,116 +836,117 @@ impl Application for TypefaceApp {
                 }
 
                 // Preview panel widgets
-                self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, 180.0, 26.0);
-                self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, 180.0, 20.0);
-                self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, 180.0);
+                let style_dropdown_h = clear_ui::layout::dropdown_height() + clear_ui::widget::label_offset(&self.style_dropdown);
+                self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, mid_panel_w - 20.0, style_dropdown_h);
+
+                let size_slider_h = clear_ui::layout::slider_height() + clear_ui::widget::label_offset(&self.size_slider);
+                self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, mid_panel_w - 20.0, size_slider_h);
+                let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
+                self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, preview_box_h);
 
                 // Details panel buttons
                 self.btn_open_folder.set_rect(right_panel_x + 10.0, 200.0, 110.0, 28.0);
                 self.btn_remove_font.set_rect(right_panel_x + 130.0, 200.0, 110.0, 28.0);
 
                 if self.select_mode {
-                    let bar_y = h_f32 - select_bar_h - 10.0;
                     self.select_cancel_btn.set_rect(w_f32 - 190.0, bar_y + 10.0, 80.0, 28.0);
                     self.select_confirm_btn.set_rect(w_f32 - 100.0, bar_y + 10.0, 80.0, 28.0);
                 }
             }
 
+            self.rebuild_hierarchy();
             self.rebuild_text_items();
             self.needs_rebuild = false;
         }
 
-        // 1. General window background (dark green-tinted theme)
-        quads.push((0.0, 0.0, w_f32, h_f32, [0.102, 0.165, 0.110, 1.0]));
+        let base_low = clear_ui::colors::page_low_color();
+        let border_col = clear_ui::colors::color_borders_color();
+        let sidebar_bg = clear_ui::colors::sidebar_bg_color();
+
+        // 1. General window background
+        let bg_color = [
+            (base_low[0] * 1.17).min(1.0),
+            (base_low[1] * 1.17).min(1.0),
+            (base_low[2] * 1.17).min(1.0),
+            1.0,
+        ];
+        quads.push((0.0, 0.0, w_f32, h_f32, bg_color));
 
         // 2. Sidebar background panel
-        quads.push((0.0, 0.0, sidebar_w, h_f32, [0.086, 0.141, 0.094, 1.0]));
-        quads.push((sidebar_w, 0.0, 1.0, h_f32, [0.18, 0.28, 0.20, 1.0])); // sidebar separator
+        quads.push((0.0, 0.0, sidebar_w, h_f32, sidebar_bg));
+        quads.push((sidebar_w, 0.0, 1.0, h_f32, border_col)); // sidebar separator
 
-        // Draw paginator sidebar
-        quads.extend(self.paginator.extra_quads());
-
-        // 5. Page Content
-        if self.current_page == Page::Browse {
-            // Draw panel separators / borders
-            // Left Panel (Browse list background)
-            quads.push((left_panel_x, 10.0, left_panel_w, content_h, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((left_panel_x, 10.0, left_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((left_panel_x, 10.0 + content_h, left_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((left_panel_x, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
-
-            // Search box
-            quads.extend(self.search_box.extra_quads());
-
-            // Scrolling List
-            quads.extend(self.font_list.extra_quads());
-
-            // Font list items
-            for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                if self.font_list.get_item_draw_y(idx, 0.0).is_some() {
-                    quads.extend(btn.extra_quads());
+        // Draw active containers and all child widgets (including paginator and panel plates)
+        for &child_ptr in &self.page_root_container.children {
+            unsafe {
+                if let Some(child) = child_ptr.as_ref() {
+                    if child.visible() {
+                        quads.extend(child.extra_quads());
+                    }
                 }
             }
+        }
 
-            // Middle Panel (Preview)
-            quads.push((mid_panel_x, 10.0, mid_panel_w, content_h, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((mid_panel_x, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
+        // 5. Page Content Outline Borders
+        if self.current_page == Page::Browse {
+            // Left Panel Borders
+            quads.push((left_panel_x, 10.0, left_panel_w, 1.0, border_col));
+            quads.push((left_panel_x, 10.0 + content_h, left_panel_w, 1.0, border_col));
+            quads.push((left_panel_x, 10.0, 1.0, content_h, border_col));
+            quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col));
+
+            // Middle Panel Borders
+            quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, border_col));
+            quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col));
+            quads.push((mid_panel_x, 10.0, 1.0, content_h, border_col));
+            quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col));
 
             if self.selected_family.is_some() {
-                // Dropdown
-                quads.extend(self.style_dropdown.extra_quads());
-                // Slider
-                quads.extend(self.size_slider.extra_quads());
-                // Custom text input
-                quads.extend(self.preview_box.extra_quads());
-
-                // Preview areas (frosted/darkened background inside panel)
+                // Alphabet preview box background & borders
                 let preview_box_x = mid_panel_x + 10.0;
                 let preview_box_w = mid_panel_w - 20.0;
+                let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
+                let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
 
-                quads.push((preview_box_x, 380.0, preview_box_w, 120.0, [0.078, 0.133, 0.086, 1.0])); // alphabet box bg
-                quads.push((preview_box_x, 380.0, preview_box_w, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((preview_box_x, 500.0, preview_box_w, 1.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((preview_box_x, 380.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
-                quads.push((preview_box_x + preview_box_w, 380.0, 1.0, 120.0, [0.15, 0.25, 0.17, 1.0]));
+                let alphabet_bg = [
+                    base_low[0] * 0.9,
+                    base_low[1] * 0.9,
+                    base_low[2] * 0.9,
+                    1.0,
+                ];
+                let alphabet_border = [
+                    border_col[0] * 0.85,
+                    border_col[1] * 0.85,
+                    border_col[2] * 0.85,
+                    1.0,
+                ];
+
+                quads.push((preview_box_x, alphabet_box_y, preview_box_w, alphabet_box_h, alphabet_bg)); // alphabet box bg
+                quads.push((preview_box_x, alphabet_box_y, preview_box_w, 1.0, alphabet_border));
+                quads.push((preview_box_x, alphabet_box_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border));
+                quads.push((preview_box_x, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
+                quads.push((preview_box_x + preview_box_w, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
             }
 
-            // Right Panel (Details)
-            quads.push((right_panel_x, 10.0, right_panel_w, content_h, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((right_panel_x, 10.0, right_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((right_panel_x, 10.0 + content_h, right_panel_w, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((right_panel_x, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((right_panel_x + right_panel_w, 10.0, 1.0, content_h, [0.18, 0.28, 0.20, 1.0]));
-
-            if self.selected_family.is_some() {
-                quads.extend(self.btn_open_folder.extra_quads());
-                quads.extend(self.btn_remove_font.extra_quads());
-            }
+            // Right Panel Borders
+            quads.push((right_panel_x, 10.0, right_panel_w, 1.0, border_col));
+            quads.push((right_panel_x, 10.0 + content_h, right_panel_w, 1.0, border_col));
+            quads.push((right_panel_x, 10.0, 1.0, content_h, border_col));
+            quads.push((right_panel_x + right_panel_w, 10.0, 1.0, content_h, border_col));
 
             if self.select_mode {
                 let bar_y = h_f32 - select_bar_h - 10.0;
-                // Draw bottom bar background
-                quads.push((left_panel_x, bar_y, w_f32 - 76.0, 48.0, [0.086, 0.141, 0.094, 1.0]));
-                // Draw divider line
-                quads.push((left_panel_x, bar_y, w_f32 - 76.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-                // Side borders
-                quads.push((left_panel_x, bar_y, 1.0, 48.0, [0.18, 0.28, 0.20, 1.0]));
-                quads.push((w_f32 - 10.0, bar_y, 1.0, 48.0, [0.18, 0.28, 0.20, 1.0]));
-                // Draw selection buttons
-                quads.extend(self.select_cancel_btn.extra_quads());
-                quads.extend(self.select_confirm_btn.extra_quads());
+                // Draw bottom bar separator and side borders
+                quads.push((left_panel_x, bar_y, w_f32 - 76.0, 1.0, border_col));
+                quads.push((left_panel_x, bar_y, 1.0, 48.0, border_col));
+                quads.push((w_f32 - 10.0, bar_y, 1.0, 48.0, border_col));
             }
         } else if self.current_page == Page::Keybindings {
-            // Keybindings page background
-            quads.push((210.0, 10.0, w_f32 - 220.0, h_f32 - 20.0, [0.086, 0.141, 0.094, 1.0]));
-            quads.push((210.0, 10.0, w_f32 - 220.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((210.0, h_f32 - 10.0, w_f32 - 220.0, 1.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((210.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
-            quads.push((w_f32 - 10.0, 10.0, 1.0, h_f32 - 20.0, [0.18, 0.28, 0.20, 1.0]));
+            // Keybindings page borders
+            quads.push((210.0, 10.0, w_f32 - 220.0, 1.0, border_col));
+            quads.push((210.0, h_f32 - 10.0, w_f32 - 220.0, 1.0, border_col));
+            quads.push((210.0, 10.0, 1.0, h_f32 - 20.0, border_col));
+            quads.push((w_f32 - 10.0, 10.0, 1.0, h_f32 - 20.0, border_col));
         }
     }
 
@@ -973,35 +967,25 @@ impl Application for TypefaceApp {
         let mut changed = false;
         let px = pos.x as f32;
         let py = pos.y as f32;
-        let sidebar_w = self.paginator.sidebar_w();
-        
-        if px < sidebar_w {
-            if self.paginator.cursor_moved(px, py) { changed = true; }
-        }
 
-        if self.current_page == Page::Browse {
-            if self.search_box.on_cursor_moved(px, py) { changed = true; }
-            if self.font_list.on_cursor_moved(px, py) { changed = true; }
+        let old_size = self.preview_box.font_size;
 
-            // Font list items
-            for btn in &mut self.font_buttons {
-                if btn.rect().0 > -9000.0 {
-                    if btn.on_cursor_moved(px, py) { changed = true; }
+        for &child_ptr in &self.page_root_container.children {
+            unsafe {
+                if let Some(child) = child_ptr.as_mut() {
+                    if child.visible() {
+                        if child.cursor_moved(px, py, &mut self.ui_context) {
+                            changed = true;
+                        }
+                    }
                 }
             }
+        }
 
-            if self.selected_family.is_some() {
-                if self.style_dropdown.on_cursor_moved(px, py) { changed = true; }
-                if self.size_slider.on_cursor_moved(px, py) { changed = true; }
-                if self.preview_box.on_cursor_moved(px, py) { changed = true; }
-                if self.btn_open_folder.on_cursor_moved(px, py) { changed = true; }
-                if self.btn_remove_font.on_cursor_moved(px, py) { changed = true; }
-            }
-
-            if self.select_mode {
-                if self.select_cancel_btn.on_cursor_moved(px, py) { changed = true; }
-                if self.select_confirm_btn.on_cursor_moved(px, py) { changed = true; }
-            }
+        let new_size = self.size_slider.get_scaled_value();
+        if (new_size - old_size).abs() > 0.001 {
+            self.preview_box.font_size = new_size;
+            changed = true;
         }
 
         if changed {
@@ -1015,106 +999,88 @@ impl Application for TypefaceApp {
         let mut msg_out = None;
         let px = pos.x as f32;
         let py = pos.y as f32;
-        let sidebar_w = self.paginator.sidebar_w();
-        
-        // Paginator sidebar
-        if px < sidebar_w {
-            if self.paginator.mouse_input(button, state, px, py) {
+
+        if state == ElementState::Pressed && button == MouseButton::Left {
+            if !self.search_box.hit_test(px, py, &self.ui_context) {
+                self.search_box.unfocus();
                 changed = true;
-                if self.paginator.take_click() {
-                    let new_page = self.paginator.selected_page();
-                    let target_page = match new_page {
-                        0 => Page::Browse,
-                        1 => Page::Keybindings,
-                        _ => Page::Browse,
-                    };
-                    msg_out = Some(AppMessage::SwitchPage(target_page));
+            } else {
+                self.ui_context.set_focused(&mut self.search_box);
+            }
+            if !self.preview_box.hit_test(px, py, &self.ui_context) {
+                self.preview_box.unfocus();
+                changed = true;
+            } else {
+                self.ui_context.set_focused(&mut self.preview_box);
+            }
+        }
+
+        // Route input to page_root_container children in reverse order
+        for &child_ptr in self.page_root_container.children.iter().rev() {
+            unsafe {
+                if let Some(child) = child_ptr.as_mut() {
+                    if child.visible() {
+                        if child.mouse_input(button, state, px, py, &mut self.ui_context) {
+                            changed = true;
+                            break;
+                        }
+                    }
                 }
             }
         }
 
+        // Process side effects / clicks
+        if self.paginator.take_click() {
+            let new_page = self.paginator.selected_page();
+            let target_page = match new_page {
+                0 => Page::Browse,
+                1 => Page::Keybindings,
+                _ => Page::Browse,
+            };
+            msg_out = Some(AppMessage::SwitchPage(target_page));
+        }
+
         if self.current_page == Page::Browse {
-            // Dropdown has priority if open
-            let dropdown_was_open = self.style_dropdown.open;
-            if self.selected_family.is_some() && self.style_dropdown.mouse_input(button, state, px, py) {
-                changed = true;
-                if self.style_dropdown.take_change() {
-                    msg_out = Some(AppMessage::SelectStyle(self.style_dropdown.selected));
+            if self.selected_family.is_some() && self.style_dropdown.take_change() {
+                msg_out = Some(AppMessage::SelectStyle(self.style_dropdown.selected));
+            }
+
+            for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
+                if btn.rect().0 > -9000.0 && btn.take_click() {
+                    if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
+                        let selected = self.filtered[idx].clone();
+                        print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
+                        std::process::exit(0);
+                    }
+                    self.last_click_idx = Some(idx);
+                    self.click_timer = 0.35;
+                    msg_out = Some(AppMessage::SelectFamily(idx));
+                    break;
                 }
             }
 
-            if !dropdown_was_open {
-                if self.search_box.mouse_input(button, state, px, py) {
-                    changed = true;
-                } else if state == ElementState::Pressed && button == MouseButton::Left {
-                    self.search_box.unfocus();
-                    changed = true;
-                }
+            let old_size = self.preview_box.font_size;
+            let new_size = self.size_slider.get_scaled_value();
+            if (new_size - old_size).abs() > 0.001 {
+                self.preview_box.font_size = new_size;
+                msg_out = Some(AppMessage::FontSizeChanged);
+            }
 
-                if self.preview_box.mouse_input(button, state, px, py) {
-                    changed = true;
-                } else if state == ElementState::Pressed && button == MouseButton::Left {
-                    self.preview_box.unfocus();
-                    changed = true;
-                }
+            if self.btn_open_folder.take_click() {
+                msg_out = Some(AppMessage::OpenFolder);
+            }
+            if self.btn_remove_font.take_click() {
+                msg_out = Some(AppMessage::RemoveFont);
+            }
 
-                if self.font_list.mouse_input(button, state, px, py) {
-                    changed = true;
+            if self.select_mode {
+                if self.select_cancel_btn.take_click() {
+                    std::process::exit(1);
                 }
-
-                // Check list items
-                for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                    if btn.rect().0 > -9000.0 {
-                        if btn.mouse_input(button, state, px, py) {
-                            changed = true;
-                            if state == ElementState::Released && btn.take_click() {
-                                if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
-                                    let selected = self.filtered[idx].clone();
-                                    print!("{}", selected);
-                                    std::process::exit(0);
-                                }
-                                self.last_click_idx = Some(idx);
-                                self.click_timer = 0.35;
-                                msg_out = Some(AppMessage::SelectFamily(idx));
-                            }
-                        }
-                    }
-                }
-
-                if self.selected_family.is_some() {
-                    if self.size_slider.mouse_input(button, state, px, py) {
-                        changed = true;
-                        msg_out = Some(AppMessage::FontSizeChanged);
-                    }
-                    if self.btn_open_folder.mouse_input(button, state, px, py) {
-                        changed = true;
-                        if state == ElementState::Released && self.btn_open_folder.take_click() {
-                            msg_out = Some(AppMessage::OpenFolder);
-                        }
-                    }
-                    if self.btn_remove_font.mouse_input(button, state, px, py) {
-                        changed = true;
-                        if state == ElementState::Released && self.btn_remove_font.take_click() {
-                            msg_out = Some(AppMessage::RemoveFont);
-                        }
-                    }
-                }
-
-                if self.select_mode {
-                    if self.select_cancel_btn.mouse_input(button, state, px, py) {
-                        changed = true;
-                        if state == ElementState::Released && self.select_cancel_btn.take_click() {
-                            std::process::exit(1);
-                        }
-                    }
-                    if self.select_confirm_btn.mouse_input(button, state, px, py) {
-                        changed = true;
-                        if state == ElementState::Released && self.select_confirm_btn.take_click() {
-                            let selected = self.selected_family.clone().unwrap_or_default();
-                            print!("{}", selected);
-                            std::process::exit(0);
-                        }
-                    }
+                if self.select_confirm_btn.take_click() {
+                    let selected = self.selected_family.clone().unwrap_or_default();
+                    print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
+                    std::process::exit(0);
                 }
             }
         }
@@ -1131,15 +1097,16 @@ impl Application for TypefaceApp {
         let mut changed = false;
         let px = pos.x as f32;
         let py = pos.y as f32;
-        let sidebar_w = self.paginator.sidebar_w();
-        
-        if px < sidebar_w {
-            if self.paginator.mouse_wheel(delta, px, py) {
-                changed = true;
-            }
-        } else if self.current_page == Page::Browse {
-            if self.font_list.mouse_wheel(delta, px, py) {
-                changed = true;
+
+        for &child_ptr in &self.page_root_container.children {
+            unsafe {
+                if let Some(child) = child_ptr.as_mut() {
+                    if child.visible() {
+                        if child.mouse_wheel(delta, px, py, &mut self.ui_context) {
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -1172,12 +1139,14 @@ impl Application for TypefaceApp {
                     "f" => {
                         self.current_page = Page::Browse;
                         self.search_box.focus();
+                        self.ui_context.set_focused(&mut self.search_box);
                         self.preview_box.unfocus();
                         handled = true;
                     }
                     "e" => {
                         self.current_page = Page::Browse;
                         self.preview_box.focus();
+                        self.ui_context.set_focused(&mut self.preview_box);
                         self.search_box.unfocus();
                         handled = true;
                     }
@@ -1198,16 +1167,18 @@ impl Application for TypefaceApp {
                 }
                 Key::Character(ref ch) if ch == "+" || ch == "=" => {
                     if self.selected_family.is_some() {
-                        let new_sz = (self.size_slider.get_scaled_value() + 2.0).min(120.0);
-                        self.size_slider.set_value((new_sz - 8.0) / (120.0 - 8.0));
+                        let (_, max) = self.size_slider.range();
+                        let new_sz = (self.size_slider.get_scaled_value() + 2.0).min(max);
+                        self.size_slider.set_scaled_value(new_sz);
                         msg_out = Some(AppMessage::FontSizeChanged);
                         handled = true;
                     }
                 }
                 Key::Character(ref ch) if ch == "-" => {
                     if self.selected_family.is_some() {
-                        let new_sz = (self.size_slider.get_scaled_value() - 2.0).max(8.0);
-                        self.size_slider.set_value((new_sz - 8.0) / (120.0 - 8.0));
+                        let (min, _) = self.size_slider.range();
+                        let new_sz = (self.size_slider.get_scaled_value() - 2.0).max(min);
+                        self.size_slider.set_scaled_value(new_sz);
                         msg_out = Some(AppMessage::FontSizeChanged);
                         handled = true;
                     }
@@ -1239,20 +1210,27 @@ impl Application for TypefaceApp {
             }
         }
 
-        // TextBox inputs
+        // TextBox and other focused widgets input propagation
         if !handled && self.current_page == Page::Browse {
-            if self.search_box.focused() {
-                let old_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
-                if self.search_box.keyboard_input(event) {
-                    handled = true;
-                    let new_text = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
-                    if old_text != *new_text {
-                        msg_out = Some(AppMessage::SearchChanged);
+            let old_search_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
+            
+            for &child_ptr in &self.page_root_container.children {
+                unsafe {
+                    if let Some(child) = child_ptr.as_mut() {
+                        if child.visible() {
+                            if child.keyboard_input(event, &mut self.ui_context) {
+                                handled = true;
+                                break;
+                            }
+                        }
                     }
                 }
-            } else if self.preview_box.focused() {
-                if self.preview_box.keyboard_input(event) {
-                    handled = true;
+            }
+
+            if handled {
+                let new_search_text = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
+                if old_search_text != *new_search_text {
+                    msg_out = Some(AppMessage::SearchChanged);
                 }
             }
         }
