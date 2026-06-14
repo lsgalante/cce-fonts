@@ -139,7 +139,7 @@ fn make_text_buffer_with_font(
     let mut attrs = Attrs::new();
     if let Some(ref font_family) = family_name {
         let family = match font_family.as_str() {
-            "monospace" => glyphon::Family::Monospace,
+            "monospace" => glyphon::Family::Name(clear_ui::layout::get_system_monospace_font()),
             "sans-serif" => glyphon::Family::SansSerif,
             "serif" => glyphon::Family::Serif,
             name => glyphon::Family::Name(name),
@@ -405,15 +405,15 @@ impl TypefaceApp {
                     weight_val,
                 );
                 
-                let mid_panel_w = self.right_panel.base.x - 12.0 - self.mid_panel.base.x;
-                let preview_box_x = self.mid_panel.base.x + 10.0;
+                let mid_panel_w = self.right_panel.base.base.x - 12.0 - self.mid_panel.base.base.x;
+                let preview_box_x = self.mid_panel.base.base.x + 10.0;
                 let preview_box_w = mid_panel_w - 20.0;
                 let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
                 let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
 
                 self.text_items.push(TextItem {
                     buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
-                    x: self.mid_panel.base.x + 20.0,
+                    x: self.mid_panel.base.base.x + 20.0,
                     y: alphabet_box_y + 12.0,
                     color: glyphon::Color::rgb(0x88, 0x88, 0x99),
                     bounds: Some([preview_box_x, alphabet_box_y, preview_box_x + preview_box_w, alphabet_box_y + alphabet_box_h]),
@@ -479,7 +479,7 @@ impl TypefaceApp {
         }
 
         if self.current_page == Page::Browse && self.select_mode {
-            let left_panel_x = self.left_panel.base.x;
+            let left_panel_x = self.left_panel.base.base.x;
             let bar_y = self.height as f32 - 48.0 - 10.0;
             labels.push((TextLabel {
                 text: "Selected Font:".to_string(),
@@ -593,7 +593,11 @@ impl Application for TypefaceApp {
             height: if select_mode { 500 } else { 720 },
             scale_factor: 1.0,
             text_items: Vec::new(),
-            font_system: FontSystem::new(),
+            font_system: {
+                let mut fs = FontSystem::new();
+                fs.db_mut().load_fonts_dir("/home/lsgalante/Dropbox/Fonts");
+                fs
+            },
             needs_rebuild: true,
             page_root_container: Container::new(),
             left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
