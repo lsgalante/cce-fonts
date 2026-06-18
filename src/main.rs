@@ -2,13 +2,13 @@ mod pages;
 
 use wayland_client::QueueHandle;
 use glyphon::{FontSystem, Buffer, Metrics, Attrs};
-use clear_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
-use clear_ui::widget::{
+use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
+use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
     Paginator, Container, Plate
 };
-use clear_ui::widget::focus::link_parent_child;
+use cce_ui::widget::focus::link_parent_child;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -110,7 +110,7 @@ struct TypefaceApp {
     mid_panel: Plate,
     right_panel: Plate,
     bottom_bar: Plate,
-    ui_context: clear_ui::context::UiContext,
+    ui_context: cce_ui::context::UiContext,
 }
 
 fn make_text_buffer_with_font(
@@ -121,12 +121,12 @@ fn make_text_buffer_with_font(
     style: Option<glyphon::Style>,
     weight: Option<glyphon::Weight>,
 ) -> Buffer {
-    let scale = clear_ui::scale::scale_factor();
+    let scale = cce_ui::scale::scale_factor();
     let mut font_size = size;
     let mut family_name = None;
 
     if let Some(font_str) = font {
-        let (parsed_family, parsed_size) = clear_ui::layout::parse_font_string(font_str);
+        let (parsed_family, parsed_size) = cce_ui::layout::parse_font_string(font_str);
         if let Some(ps) = parsed_size {
             font_size = ps;
         }
@@ -139,7 +139,7 @@ fn make_text_buffer_with_font(
     let mut attrs = Attrs::new();
     if let Some(ref font_family) = family_name {
         let family = match font_family.as_str() {
-            "monospace" => glyphon::Family::Name(clear_ui::layout::get_system_monospace_font()),
+            "monospace" => glyphon::Family::Name(cce_ui::layout::get_system_monospace_font()),
             "sans-serif" => glyphon::Family::SansSerif,
             "serif" => glyphon::Family::Serif,
             name => glyphon::Family::Name(name),
@@ -358,7 +358,7 @@ impl TypefaceApp {
 
             // Render Dropdown popover labels if open
             if self.style_dropdown.open && self.selected_family.is_some() {
-                let mut pc = clear_ui::layout::PopoverCollector::new();
+                let mut pc = cce_ui::layout::PopoverCollector::new();
                 self.style_dropdown.render_popover(&mut pc);
                 for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
                     let color_u8 = [
@@ -500,7 +500,7 @@ impl TypefaceApp {
         }
 
         // Convert TextLabels to text_items
-        let scale = clear_ui::scale::scale_factor();
+        let scale = cce_ui::scale::scale_factor();
         for (label, bounds) in labels {
             let physical_size = label.font_size * scale;
             let metrics = Metrics::new(physical_size, physical_size * 1.4);
@@ -529,7 +529,7 @@ impl Application for TypefaceApp {
     type Message = AppMessage;
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
-        clear_ui::scale::set_scale_factor(1.0);
+        cce_ui::scale::set_scale_factor(1.0);
         // Parse command line arguments
         let args: Vec<String> = std::env::args().collect();
         let select_mode = args.iter().any(|arg| arg == "--select");
@@ -604,7 +604,7 @@ impl Application for TypefaceApp {
             mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             right_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
-            ui_context: clear_ui::context::UiContext::new(),
+            ui_context: cce_ui::context::UiContext::new(),
         };
         
         app.families = app.extract_families(&app.all_fonts);
@@ -617,7 +617,7 @@ impl Application for TypefaceApp {
         if select_mode {
             let other_args: Vec<&String> = args.iter().filter(|arg| *arg != "--select" && !arg.ends_with("cce-fonts")).collect();
             if let Some(arg) = other_args.first() {
-                let (fam, sz) = clear_ui::layout::parse_font_string(arg);
+                let (fam, sz) = cce_ui::layout::parse_font_string(arg);
                 preselected_family = Some(fam);
                 preselected_size = sz;
             }
@@ -801,7 +801,7 @@ impl Application for TypefaceApp {
         };
 
         if self.needs_rebuild || size_changed {
-            clear_ui::scale::set_scale_factor(scale as f32);
+            cce_ui::scale::set_scale_factor(scale as f32);
             self.paginator.set_rect(0.0, 0.0, sidebar_w, h_f32);
 
             // Position panel Plates
@@ -840,10 +840,10 @@ impl Application for TypefaceApp {
                 }
 
                 // Preview panel widgets
-                let style_dropdown_h = clear_ui::layout::dropdown_height() + clear_ui::widget::label_offset(&self.style_dropdown);
+                let style_dropdown_h = cce_ui::layout::dropdown_height() + cce_ui::widget::label_offset(&self.style_dropdown);
                 self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, mid_panel_w - 20.0, style_dropdown_h);
 
-                let size_slider_h = clear_ui::layout::slider_height() + clear_ui::widget::label_offset(&self.size_slider);
+                let size_slider_h = cce_ui::layout::slider_height() + cce_ui::widget::label_offset(&self.size_slider);
                 self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, mid_panel_w - 20.0, size_slider_h);
                 let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
                 self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, preview_box_h);
@@ -863,9 +863,9 @@ impl Application for TypefaceApp {
             self.needs_rebuild = false;
         }
 
-        let base_low = clear_ui::colors::page_low_color();
-        let border_col = clear_ui::colors::color_borders_color();
-        let sidebar_bg = clear_ui::colors::sidebar_bg_color();
+        let base_low = cce_ui::colors::page_low_color();
+        let border_col = cce_ui::colors::color_borders_color();
+        let sidebar_bg = cce_ui::colors::sidebar_bg_color();
 
         // 1. General window background
         let bg_color = [
@@ -957,7 +957,7 @@ impl Application for TypefaceApp {
     fn overlay_quads(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, _size: LogicalSize, _scale: f64) {
         if self.current_page == Page::Browse && self.selected_family.is_some() {
             // Style Dropdown popover rendered on top of everything
-            let mut pc = clear_ui::layout::PopoverCollector::new();
+            let mut pc = cce_ui::layout::PopoverCollector::new();
             self.style_dropdown.render_popover(&mut pc);
             quads.extend(pc.rects.iter().map(|&(c, x, y, w, h)| (x, y, w, h, c)));
         }
@@ -1252,5 +1252,5 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let _guard = rt.enter();
     
-    clear_ui::engine::run::<TypefaceApp>();
+    cce_ui::engine::run::<TypefaceApp>();
 }
