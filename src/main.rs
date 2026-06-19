@@ -44,6 +44,7 @@ pub enum BrowseNavigation {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum AppMessage {
     Exit,
     SwitchPage(Page),
