@@ -6,7 +6,7 @@ use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, Win
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
-    Paginator, Container, Plate
+    MenuBar, Container, Plate, PageSelector, MenuController
 };
 use cce_ui::widget::focus::link_parent_child;
 
@@ -59,7 +59,7 @@ enum AppMessage {
 
 struct TypefaceApp {
     // Sidebar
-    paginator: Paginator,
+    paginator: MenuBar,
 
     // Browse panel
     search_box: TextBox,
@@ -535,12 +535,12 @@ impl Application for TypefaceApp {
         let args: Vec<String> = std::env::args().collect();
         let select_mode = args.iter().any(|arg| arg == "--select");
 
-        let mut paginator = Paginator::new(56.0, vec![
+        let mut paginator = MenuBar::new(0.0, 0.0, 56.0, 0.0)
+            .with_vertical(true);
+        paginator.set_pages(vec![
             "Browse".to_string(),
             "Keys".to_string(),
         ]);
-        paginator.tabs_rotated = true;
-        paginator.tabs_at_top = false;
 
         let mut search_box = TextBox::new(String::new()).with_multiline(false).with_draw_bg_border(true);
         search_box.font_size = 12.0;
@@ -1035,8 +1035,8 @@ impl Application for TypefaceApp {
         }
 
         // Process side effects / clicks
-        if self.paginator.take_click() {
-            let new_page = self.paginator.selected_page();
+        if let Some((new_page, _)) = self.paginator.menu_click() {
+            self.paginator.set_selected_page(new_page);
             let target_page = match new_page {
                 0 => Page::Browse,
                 1 => Page::Keybindings,
