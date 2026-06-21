@@ -6,7 +6,7 @@ use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, Win
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
-    MenuBar, Container, Plate, PageSelector, MenuController
+    Paginator, Container, Plate, PageSelector, MenuController
 };
 use cce_ui::widget::focus::link_parent_child;
 
@@ -59,7 +59,7 @@ enum AppMessage {
 
 struct TypefaceApp {
     // Sidebar
-    paginator: MenuBar,
+    paginator: Paginator,
 
     // Browse panel
     search_box: TextBox,
@@ -535,9 +535,7 @@ impl Application for TypefaceApp {
         let args: Vec<String> = std::env::args().collect();
         let select_mode = args.iter().any(|arg| arg == "--select");
 
-        let mut paginator = MenuBar::new(0.0, 0.0, 56.0, 0.0)
-            .with_vertical(true);
-        paginator.set_pages(vec![
+        let paginator = Paginator::new(56.0, vec![
             "Browse".to_string(),
             "Keys".to_string(),
         ]);
