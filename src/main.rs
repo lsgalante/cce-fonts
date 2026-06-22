@@ -6,7 +6,7 @@ use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, Win
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
-    Paginator, Container, Plate, PageSelector, MenuController
+    Paginator, Window, Plate, PageSelector, MenuController
 };
 use cce_ui::widget::focus::link_parent_child;
 
@@ -106,7 +106,7 @@ struct TypefaceApp {
     needs_rebuild: bool,
 
     // Containers
-    page_root_container: Container,
+    root_window: Window,
     left_panel: Plate,
     mid_panel: Plate,
     right_panel: Plate,
@@ -161,20 +161,20 @@ fn make_text_buffer_with_font(
 impl TypefaceApp {
     fn rebuild_hierarchy(&mut self) {
         let ctx = &mut self.ui_context;
-        self.page_root_container.clear_children(ctx);
+        self.root_window.clear_children(ctx);
         self.left_panel.clear_children(ctx);
         self.mid_panel.clear_children(ctx);
         self.right_panel.clear_children(ctx);
         self.bottom_bar.clear_children(ctx);
 
         // 1. Link active page-level containers to root
-        link_parent_child(&mut self.page_root_container, &mut self.paginator, ctx);
-        link_parent_child(&mut self.page_root_container, &mut self.left_panel, ctx);
-        link_parent_child(&mut self.page_root_container, &mut self.mid_panel, ctx);
-        link_parent_child(&mut self.page_root_container, &mut self.right_panel, ctx);
+        link_parent_child(&mut self.root_window, &mut self.paginator, ctx);
+        link_parent_child(&mut self.root_window, &mut self.left_panel, ctx);
+        link_parent_child(&mut self.root_window, &mut self.mid_panel, ctx);
+        link_parent_child(&mut self.root_window, &mut self.right_panel, ctx);
         
         if self.select_mode {
-            link_parent_child(&mut self.page_root_container, &mut self.bottom_bar, ctx);
+            link_parent_child(&mut self.root_window, &mut self.bottom_bar, ctx);
         }
 
         if self.current_page == Page::Browse {
@@ -535,7 +535,7 @@ impl Application for TypefaceApp {
         let args: Vec<String> = std::env::args().collect();
         let select_mode = args.iter().any(|arg| arg == "--select");
 
-        let paginator = Paginator::new(56.0, vec![
+        let paginator = Paginator::new(vec![
             "Browse".to_string(),
             "Keys".to_string(),
         ]);
@@ -598,7 +598,14 @@ impl Application for TypefaceApp {
                 fs
             },
             needs_rebuild: true,
-            page_root_container: Container::new(),
+            root_window: {
+                let win_color = cce_ui::colors::page_low_color();
+                let win_radius = cce_ui::colors::window_corner_radius();
+                Window::new(0.0, 0.0, if select_mode { 900.0 } else { 1200.0 }, if select_mode { 500.0 } else { 720.0 })
+                    .with_background(win_color)
+                    .with_border([0.22, 0.22, 0.28, 1.0], 1.5)
+                    .with_radius(win_radius)
+            },
             left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             right_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
@@ -801,6 +808,9 @@ impl Application for TypefaceApp {
 
         if self.needs_rebuild || size_changed {
             cce_ui::scale::set_scale_factor(scale as f32);
+            self.root_window.set_rect(0.0, 0.0, w_f32, h_f32);
+            self.root_window.background_color = Some(cce_ui::colors::page_low_color());
+            self.root_window.radius = cce_ui::colors::window_corner_radius();
             self.paginator.set_rect(0.0, 0.0, sidebar_w, h_f32);
 
             // Position panel Plates
@@ -871,7 +881,7 @@ impl Application for TypefaceApp {
             (base_low[0] * 1.17).min(1.0),
             (base_low[1] * 1.17).min(1.0),
             (base_low[2] * 1.17).min(1.0),
-            1.0,
+            base_low[3],
         ];
         quads.push((0.0, 0.0, w_f32, h_f32, bg_color));
 
@@ -880,7 +890,7 @@ impl Application for TypefaceApp {
         quads.push((sidebar_w, 0.0, 1.0, h_f32, border_col)); // sidebar separator
 
         // Draw active containers and all child widgets (including paginator and panel plates)
-        for &child_ptr in &self.page_root_container.children {
+        for &child_ptr in &self.root_window.children {
             unsafe {
                 if let Some(child) = child_ptr.as_ref() {
                     if child.visible() {
@@ -973,7 +983,7 @@ impl Application for TypefaceApp {
 
         let old_size = self.preview_box.font_size;
 
-        for &child_ptr in &self.page_root_container.children {
+        for &child_ptr in &self.root_window.children {
             unsafe {
                 if let Some(child) = child_ptr.as_mut() {
                     if child.visible() {
@@ -1018,8 +1028,8 @@ impl Application for TypefaceApp {
             }
         }
 
-        // Route input to page_root_container children in reverse order
-        for &child_ptr in self.page_root_container.children.iter().rev() {
+        // Route input to root_window children in reverse order
+        for &child_ptr in self.root_window.children.iter().rev() {
             unsafe {
                 if let Some(child) = child_ptr.as_mut() {
                     if child.visible() {
@@ -1101,7 +1111,7 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        for &child_ptr in &self.page_root_container.children {
+        for &child_ptr in &self.root_window.children {
             unsafe {
                 if let Some(child) = child_ptr.as_mut() {
                     if child.visible() {
@@ -1217,7 +1227,7 @@ impl Application for TypefaceApp {
         if !handled && self.current_page == Page::Browse {
             let old_search_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
             
-            for &child_ptr in &self.page_root_container.children {
+            for &child_ptr in &self.root_window.children {
                 unsafe {
                     if let Some(child) = child_ptr.as_mut() {
                         if child.visible() {
