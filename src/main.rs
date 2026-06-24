@@ -529,6 +529,10 @@ fn preview_text_buffer_clamped(mut buf: Buffer, font_system: &mut FontSystem, ma
 impl Application for TypefaceApp {
     type Message = AppMessage;
 
+    fn ui_context(&self) -> Option<&cce_ui::context::UiContext> {
+        Some(&self.ui_context)
+    }
+
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
         cce_ui::scale::set_scale_factor(1.0);
         // Parse command line arguments
