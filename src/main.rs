@@ -6,7 +6,7 @@ use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, Win
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
-    Paginator, Window, Plate, PageSelector, MenuController
+    Paginator, Backplate, Plate, PageSelector, MenuController
 };
 use cce_ui::widget::focus::link_parent_child;
 
@@ -106,7 +106,7 @@ struct TypefaceApp {
     needs_rebuild: bool,
 
     // Containers
-    root_window: Window,
+    root_window: Backplate,
     left_panel: Plate,
     mid_panel: Plate,
     right_panel: Plate,
@@ -604,8 +604,8 @@ impl Application for TypefaceApp {
             needs_rebuild: true,
             root_window: {
                 let win_color = cce_ui::colors::page_low_color();
-                let win_radius = cce_ui::colors::window_corner_radius();
-                Window::new(0.0, 0.0, if select_mode { 900.0 } else { 1200.0 }, if select_mode { 500.0 } else { 720.0 })
+                let win_radius = cce_ui::colors::backplate_corner_radius();
+                Backplate::new(0.0, 0.0, if select_mode { 900.0 } else { 1200.0 }, if select_mode { 500.0 } else { 720.0 })
                     .with_background(win_color)
                     .with_border([0.22, 0.22, 0.28, 1.0], 1.5)
                     .with_radius(win_radius)
@@ -814,7 +814,7 @@ impl Application for TypefaceApp {
             cce_ui::scale::set_scale_factor(scale as f32);
             self.root_window.set_rect(0.0, 0.0, w_f32, h_f32);
             self.root_window.background_color = Some(cce_ui::colors::page_low_color());
-            self.root_window.radius = cce_ui::colors::window_corner_radius();
+            self.root_window.radius = cce_ui::colors::backplate_corner_radius();
             self.paginator.set_rect(0.0, 0.0, sidebar_w, h_f32);
 
             // Position panel Plates
