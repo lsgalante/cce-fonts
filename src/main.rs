@@ -827,7 +827,7 @@ impl Application for TypefaceApp {
             (base_low[2] * 1.17).min(1.0),
             base_low[3],
         ];
-        quads.push((0.0, 0.0, w_f32, h_f32, bg_color));
+        self.root_window.background_color = Some(bg_color);
 
         // Draw active containers and all child widgets (including panel plates)
         quads.extend(self.root_window.all_quads(&self.ui_context));
