@@ -5,7 +5,7 @@ use glyphon::{FontSystem, Buffer, Metrics, Attrs};
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
-    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, ScrollBox, Dropdown, Slider,
+    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, ScrollBox, Dropdown, Spinbox,
     Backplate, Plate
 };
 use cce_ui::widget::focus::link_parent_child;
@@ -39,7 +39,7 @@ struct TypefaceApp {
 
     // Preview panel
     style_dropdown: Dropdown,
-    size_slider: Slider,
+    size_spinbox: Spinbox,
     preview_box: TextBox,
 
     // Details panel
@@ -165,7 +165,7 @@ impl TypefaceApp {
             link_parent_child(&mut self.mid_panel, &mut self.btn_open_folder, ctx);
             link_parent_child(&mut self.mid_panel, &mut self.btn_remove_font, ctx);
             link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.size_spinbox, ctx);
             link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
         }
 
@@ -300,7 +300,7 @@ impl TypefaceApp {
             btn.prepare_text(font_system);
         }
         self.style_dropdown.prepare_text(font_system);
-        self.size_slider.prepare_text(font_system);
+        self.size_spinbox.prepare_text(font_system);
         self.preview_box.prepare_text(font_system);
         self.btn_open_folder.prepare_text(font_system);
         self.btn_remove_font.prepare_text(font_system);
@@ -363,7 +363,7 @@ impl TypefaceApp {
 
         // Alphabet preview
         if let Some(ref family) = self.selected_family {
-            let font_size = self.size_slider.get_scaled_value();
+            let font_size = self.size_spinbox.value as f32;
             let mut style_val = None;
             let mut weight_val = None;
             if let Some(ref style) = self.selected_style {
@@ -484,8 +484,7 @@ impl Application for TypefaceApp {
 
         let style_dropdown = Dropdown::new(Vec::new(), 0).with_label("Style:");
 
-        let mut size_slider = Slider::new().with_range(8.0, 120.0).with_readout(true).with_label("Size:");
-        size_slider.set_scaled_value(32.0);
+        let size_spinbox = Spinbox::new(32, 8, 120, 1).with_label("Size:");
 
         let mut preview_box = TextBox::new(String::from("The quick brown fox jumps over the lazy dog")).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
         preview_box.font_size = 32.0;
@@ -502,7 +501,7 @@ impl Application for TypefaceApp {
             font_list,
             font_buttons: Vec::new(),
             style_dropdown,
-            size_slider,
+            size_spinbox,
             preview_box,
             btn_open_folder,
             btn_remove_font,
@@ -578,7 +577,10 @@ impl Application for TypefaceApp {
         }
 
         if let Some(sz) = preselected_size {
-            app.size_slider.set_scaled_value(sz);
+            app.size_spinbox.value = sz as i32;
+            if app.size_spinbox.editing {
+                app.size_spinbox.edit_buffer = app.size_spinbox.value.to_string();
+            }
             app.preview_box.font_size = sz;
         }
 
@@ -637,7 +639,7 @@ impl Application for TypefaceApp {
                 }
             }
             AppMessage::FontSizeChanged => {
-                self.preview_box.font_size = self.size_slider.get_scaled_value();
+                self.preview_box.font_size = self.size_spinbox.value as f32;
                 *needs_rebuild = true;
                 self.needs_rebuild = true;
             }
@@ -766,7 +768,7 @@ impl Application for TypefaceApp {
 
             // Preview panel widgets layout
             let style_dropdown_h = cce_ui::layout::dropdown_height() + cce_ui::widget::label_offset(&self.style_dropdown);
-            let size_slider_h = cce_ui::layout::slider_height() + cce_ui::widget::label_offset(&self.size_slider);
+            let size_spinbox_h = cce_ui::layout::spinbox_height() + cce_ui::widget::label_offset(&self.size_spinbox);
             let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
 
             let scroll_y = self.mid_scroll.scroll_y;
@@ -791,12 +793,12 @@ impl Application for TypefaceApp {
                 self.style_dropdown.set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
-            // Size slider (virtual_y = 120.0, h = size_slider_h)
-            let slider_draw_y = 10.0 + 120.0 - scroll_y;
-            if slider_draw_y + size_slider_h >= viewport_top && slider_draw_y <= viewport_bottom {
-                self.size_slider.set_rect(mid_panel_x + 10.0, slider_draw_y, mid_panel_w - 20.0, size_slider_h);
+            // Size spinbox (virtual_y = 120.0, h = size_spinbox_h)
+            let spinbox_draw_y = 10.0 + 120.0 - scroll_y;
+            if spinbox_draw_y + size_spinbox_h >= viewport_top && spinbox_draw_y <= viewport_bottom {
+                self.size_spinbox.set_rect(mid_panel_x + 10.0, spinbox_draw_y, mid_panel_w - 20.0, size_spinbox_h);
             } else {
-                self.size_slider.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.size_spinbox.set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
             // Preview box (virtual_y = 190.0, h = preview_box_h)
@@ -934,7 +936,7 @@ impl Application for TypefaceApp {
             }
         }
 
-        let new_size = self.size_slider.get_scaled_value();
+        let new_size = self.size_spinbox.value as f32;
         if (new_size - old_size).abs() > 0.001 {
             self.preview_box.font_size = new_size;
             changed = true;
@@ -989,7 +991,7 @@ impl Application for TypefaceApp {
             if btn.rect().0 > -9000.0 && btn.take_click() {
                 if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
                     let selected = self.filtered[idx].clone();
-                    print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
+                    print!("{} {}", selected, self.size_spinbox.value);
                     std::process::exit(0);
                 }
                 self.last_click_idx = Some(idx);
@@ -1000,7 +1002,7 @@ impl Application for TypefaceApp {
         }
 
         let old_size = self.preview_box.font_size;
-        let new_size = self.size_slider.get_scaled_value();
+        let new_size = self.size_spinbox.value as f32;
         if (new_size - old_size).abs() > 0.001 {
             self.preview_box.font_size = new_size;
             msg_out = Some(AppMessage::FontSizeChanged);
@@ -1019,7 +1021,7 @@ impl Application for TypefaceApp {
             }
             if self.select_confirm_btn.take_click() {
                 let selected = self.selected_family.clone().unwrap_or_default();
-                print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
+                print!("{} {}", selected, self.size_spinbox.value);
                 std::process::exit(0);
             }
         }
@@ -1096,18 +1098,24 @@ impl Application for TypefaceApp {
                 }
                 Key::Character(ref ch) if ch == "+" || ch == "=" => {
                     if self.selected_family.is_some() {
-                        let (_, max) = self.size_slider.range();
-                        let new_sz = (self.size_slider.get_scaled_value() + 2.0).min(max);
-                        self.size_slider.set_scaled_value(new_sz);
+                        let (_, max) = self.size_spinbox.range();
+                        let old_val = self.size_spinbox.value;
+                        self.size_spinbox.value = (self.size_spinbox.value + 2).min(max);
+                        if self.size_spinbox.value != old_val && self.size_spinbox.editing {
+                            self.size_spinbox.edit_buffer = self.size_spinbox.value.to_string();
+                        }
                         msg_out = Some(AppMessage::FontSizeChanged);
                         handled = true;
                     }
                 }
                 Key::Character(ref ch) if ch == "-" => {
                     if self.selected_family.is_some() {
-                        let (min, _) = self.size_slider.range();
-                        let new_sz = (self.size_slider.get_scaled_value() - 2.0).max(min);
-                        self.size_slider.set_scaled_value(new_sz);
+                        let (min, _) = self.size_spinbox.range();
+                        let old_val = self.size_spinbox.value;
+                        self.size_spinbox.value = (self.size_spinbox.value - 2).max(min);
+                        if self.size_spinbox.value != old_val && self.size_spinbox.editing {
+                            self.size_spinbox.edit_buffer = self.size_spinbox.value.to_string();
+                        }
                         msg_out = Some(AppMessage::FontSizeChanged);
                         handled = true;
                     }
