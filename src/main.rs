@@ -832,7 +832,13 @@ impl Application for TypefaceApp {
         self.root_window.background_color = Some(bg_color);
 
         // Draw active containers and all child widgets (including panel plates)
-        quads.extend(self.root_window.all_quads(&self.ui_context));
+        let (rx, ry, rw, rh) = self.root_window.rect();
+        for (qx, qy, qw, qh, qc) in self.root_window.all_quads(&self.ui_context) {
+            if (qx - rx).abs() < 0.1 && (qy - ry).abs() < 0.1 && (qw - rw).abs() < 0.1 && (qh - rh).abs() < 0.1 {
+                continue;
+            }
+            quads.push((qx, qy, qw, qh, qc));
+        }
 
         // 5. Page Content Outline Borders
         // Left Panel Borders
