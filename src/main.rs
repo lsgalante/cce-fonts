@@ -6,36 +6,11 @@ use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, Win
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
     TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
-    Paginator, Backplate, Plate, PageSelector, MenuController
+    Backplate, Plate
 };
 use cce_ui::widget::focus::link_parent_child;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Page {
-    Browse,
-    Keybindings,
-}
 
-impl Page {
-    pub const ALL: [Page; 2] = [
-        Page::Browse,
-        Page::Keybindings,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Page::Browse => "Browse",
-            Page::Keybindings => "Keys",
-        }
-    }
-
-    pub fn icon(self) -> &'static str {
-        match self {
-            Page::Browse => "🔤",
-            Page::Keybindings => "⌨",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowseNavigation {
@@ -47,7 +22,6 @@ pub enum BrowseNavigation {
 #[allow(dead_code)]
 enum AppMessage {
     Exit,
-    SwitchPage(Page),
     SelectFamily(usize),
     SelectStyle(usize),
     FontSizeChanged,
@@ -58,9 +32,6 @@ enum AppMessage {
 }
 
 struct TypefaceApp {
-    // Sidebar
-    paginator: Paginator,
-
     // Browse panel
     search_box: TextBox,
     font_list: ScrollingList,
@@ -83,7 +54,6 @@ struct TypefaceApp {
     click_timer: f32,
 
     // State
-    current_page: Page,
     all_fonts: Vec<pages::FontEntry>,
     families: Vec<String>,
     filtered: Vec<String>,
@@ -168,7 +138,6 @@ impl TypefaceApp {
         self.bottom_bar.clear_children(ctx);
 
         // 1. Link active page-level containers to root
-        link_parent_child(&mut self.root_window, &mut self.paginator, ctx);
         link_parent_child(&mut self.root_window, &mut self.left_panel, ctx);
         link_parent_child(&mut self.root_window, &mut self.mid_panel, ctx);
         link_parent_child(&mut self.root_window, &mut self.right_panel, ctx);
@@ -177,36 +146,34 @@ impl TypefaceApp {
             link_parent_child(&mut self.root_window, &mut self.bottom_bar, ctx);
         }
 
-        if self.current_page == Page::Browse {
-            // Left Panel (Browse list)
-            link_parent_child(&mut self.left_panel, &mut self.search_box, ctx);
-            link_parent_child(&mut self.left_panel, &mut self.font_list, ctx);
-            
-            // Scrolling list buttons
-            for btn in &mut self.font_buttons {
-                if btn.rect().0 > -9000.0 {
-                    link_parent_child(&mut self.left_panel, btn, ctx);
-                }
+        // Left Panel (Browse list)
+        link_parent_child(&mut self.left_panel, &mut self.search_box, ctx);
+        link_parent_child(&mut self.left_panel, &mut self.font_list, ctx);
+        
+        // Scrolling list buttons
+        for btn in &mut self.font_buttons {
+            if btn.rect().0 > -9000.0 {
+                link_parent_child(&mut self.left_panel, btn, ctx);
             }
+        }
 
-            // Middle Panel (Preview)
-            if self.selected_family.is_some() {
-                link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
-                link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
-                link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
-            }
+        // Middle Panel (Preview)
+        if self.selected_family.is_some() {
+            link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
+        }
 
-            // Right Panel (Details)
-            if self.selected_family.is_some() {
-                link_parent_child(&mut self.right_panel, &mut self.btn_open_folder, ctx);
-                link_parent_child(&mut self.right_panel, &mut self.btn_remove_font, ctx);
-            }
+        // Right Panel (Details)
+        if self.selected_family.is_some() {
+            link_parent_child(&mut self.right_panel, &mut self.btn_open_folder, ctx);
+            link_parent_child(&mut self.right_panel, &mut self.btn_remove_font, ctx);
+        }
 
-            // Bottom bar
-            if self.select_mode {
-                link_parent_child(&mut self.bottom_bar, &mut self.select_cancel_btn, ctx);
-                link_parent_child(&mut self.bottom_bar, &mut self.select_confirm_btn, ctx);
-            }
+        // Bottom bar
+        if self.select_mode {
+            link_parent_child(&mut self.bottom_bar, &mut self.select_cancel_btn, ctx);
+            link_parent_child(&mut self.bottom_bar, &mut self.select_confirm_btn, ctx);
         }
     }
 
@@ -328,7 +295,6 @@ impl TypefaceApp {
         let font_system = &mut self.font_system;
 
         // Ensure all widgets have their text prepared/shaped
-        self.paginator.prepare_text(font_system);
         self.search_box.prepare_text(font_system);
         self.font_list.prepare_text(font_system);
         for btn in &mut self.font_buttons {
@@ -344,142 +310,80 @@ impl TypefaceApp {
 
         let mut labels = Vec::new();
 
-        // 1. Sidebar Page Buttons
-        labels.extend(self.paginator.text_labels_with_bounds(&self.ui_context));
+        // Page Content
+        labels.extend(self.left_panel.text_labels_with_bounds(&self.ui_context));
+        labels.extend(self.mid_panel.text_labels_with_bounds(&self.ui_context));
+        labels.extend(self.right_panel.text_labels_with_bounds(&self.ui_context));
 
-        // 2. Page Content
-        if self.current_page == Page::Browse {
-            labels.extend(self.left_panel.text_labels_with_bounds(&self.ui_context));
-            labels.extend(self.mid_panel.text_labels_with_bounds(&self.ui_context));
-            labels.extend(self.right_panel.text_labels_with_bounds(&self.ui_context));
+        if self.select_mode {
+            labels.extend(self.bottom_bar.text_labels_with_bounds(&self.ui_context));
+        }
 
-            if self.select_mode {
-                labels.extend(self.bottom_bar.text_labels_with_bounds(&self.ui_context));
-            }
-
-            // Render Dropdown popover labels if open
-            if self.style_dropdown.open && self.selected_family.is_some() {
-                let mut pc = cce_ui::layout::PopoverCollector::new();
-                self.style_dropdown.render_popover(&mut pc);
-                for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
-                    let color_u8 = [
-                        (color[0] * 255.0).clamp(0.0, 255.0) as u8,
-                        (color[1] * 255.0).clamp(0.0, 255.0) as u8,
-                        (color[2] * 255.0).clamp(0.0, 255.0) as u8,
-                    ];
-                    labels.push((TextLabel {
-                        text: content,
-                        x: tx,
-                        y: ty,
-                        font_size: size,
-                        color: color_u8,
-                    }, None));
-                }
-            }
-
-            // Alphabet preview
-            if let Some(ref family) = self.selected_family {
-                let font_size = self.size_slider.get_scaled_value();
-                let mut style_val = None;
-                let mut weight_val = None;
-                if let Some(ref style) = self.selected_style {
-                    let sl = style.to_lowercase();
-                    if sl.contains("italic") || sl.contains("oblique") {
-                        style_val = Some(glyphon::Style::Italic);
-                    }
-                    if sl.contains("bold") {
-                        weight_val = Some(glyphon::Weight::BOLD);
-                    } else if sl.contains("light") {
-                        weight_val = Some(glyphon::Weight::LIGHT);
-                    } else if sl.contains("medium") {
-                        weight_val = Some(glyphon::Weight::MEDIUM);
-                    }
-                }
-
-                let alphabet_text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n!@#$%^&*()_+-=[]{}|;':\",./<>";
-                let alph_buf = make_text_buffer_with_font(
-                    font_system,
-                    alphabet_text,
-                    (font_size * 0.55).clamp(8.0, 36.0),
-                    Some(family),
-                    style_val,
-                    weight_val,
-                );
-                
-                let mid_panel_w = self.right_panel.base.base.x - 12.0 - self.mid_panel.base.base.x;
-                let preview_box_x = self.mid_panel.base.base.x + 10.0;
-                let preview_box_w = mid_panel_w - 20.0;
-                let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
-                let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
-
-                self.text_items.push(TextItem {
-                    buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
-                    x: self.mid_panel.base.base.x + 20.0,
-                    y: alphabet_box_y + 12.0,
-                    color: glyphon::Color::rgb(0x88, 0x88, 0x99),
-                    bounds: Some([preview_box_x, alphabet_box_y, preview_box_x + preview_box_w, alphabet_box_y + alphabet_box_h]),
-                });
-            }
-        } else if self.current_page == Page::Keybindings {
-            labels.push((TextLabel {
-                text: "Keybindings".to_string(),
-                x: 220.0,
-                y: 30.0,
-                font_size: 18.0,
-                color: [0x5c, 0x90, 0x60],
-            }, None));
-
-            let sections: [(&str, &[(&str, &str)]); 3] = [
-                ("🧭 Navigation", &[
-                    ("Ctrl + F", "Search fonts"),
-                    ("Up / Down", "Navigate font list"),
-                    ("Enter", "Select font"),
-                    ("Ctrl + 1-2", "Switch page"),
-                ]),
-                ("👁 Preview", &[
-                    ("+ / -", "Increase / decrease font size"),
-                    ("Ctrl + E", "Edit preview text"),
-                ]),
-                ("⚡ Actions", &[
-                    ("Ctrl + O", "Open font folder"),
-                    ("Delete", "Remove user font"),
-                    ("Ctrl + R / F5", "Refresh font list"),
-                ]),
-            ];
-
-            let mut y_offset = 70.0;
-            for (sec_title, bindings) in &sections {
+        // Render Dropdown popover labels if open
+        if self.style_dropdown.open && self.selected_family.is_some() {
+            let mut pc = cce_ui::layout::PopoverCollector::new();
+            self.style_dropdown.render_popover(&mut pc);
+            for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
+                let color_u8 = [
+                    (color[0] * 255.0).clamp(0.0, 255.0) as u8,
+                    (color[1] * 255.0).clamp(0.0, 255.0) as u8,
+                    (color[2] * 255.0).clamp(0.0, 255.0) as u8,
+                ];
                 labels.push((TextLabel {
-                    text: sec_title.to_string(),
-                    x: 220.0,
-                    y: y_offset,
-                    font_size: 14.0,
-                    color: [0xdd, 0xdd, 0xe2],
+                    text: content,
+                    x: tx,
+                    y: ty,
+                    font_size: size,
+                    color: color_u8,
                 }, None));
-                y_offset += 24.0;
-
-                for (keys, action) in *bindings {
-                    labels.push((TextLabel {
-                        text: keys.to_string(),
-                        x: 230.0,
-                        y: y_offset,
-                        font_size: 12.0,
-                        color: [0x5c, 0x90, 0x60],
-                    }, None));
-                    labels.push((TextLabel {
-                        text: action.to_string(),
-                        x: 370.0,
-                        y: y_offset,
-                        font_size: 12.0,
-                        color: [0x88, 0x88, 0x99],
-                    }, None));
-                    y_offset += 20.0;
-                }
-                y_offset += 16.0;
             }
         }
 
-        if self.current_page == Page::Browse && self.select_mode {
+        // Alphabet preview
+        if let Some(ref family) = self.selected_family {
+            let font_size = self.size_slider.get_scaled_value();
+            let mut style_val = None;
+            let mut weight_val = None;
+            if let Some(ref style) = self.selected_style {
+                let sl = style.to_lowercase();
+                if sl.contains("italic") || sl.contains("oblique") {
+                    style_val = Some(glyphon::Style::Italic);
+                }
+                if sl.contains("bold") {
+                    weight_val = Some(glyphon::Weight::BOLD);
+                } else if sl.contains("light") {
+                    weight_val = Some(glyphon::Weight::LIGHT);
+                } else if sl.contains("medium") {
+                    weight_val = Some(glyphon::Weight::MEDIUM);
+                }
+            }
+
+            let alphabet_text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n!@#$%^&*()_+-=[]{}|;':\",./<>";
+            let alph_buf = make_text_buffer_with_font(
+                font_system,
+                alphabet_text,
+                (font_size * 0.55).clamp(8.0, 36.0),
+                Some(family),
+                style_val,
+                weight_val,
+            );
+            
+            let mid_panel_w = self.right_panel.base.base.x - 12.0 - self.mid_panel.base.base.x;
+            let preview_box_x = self.mid_panel.base.base.x + 10.0;
+            let preview_box_w = mid_panel_w - 20.0;
+            let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
+            let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+
+            self.text_items.push(TextItem {
+                buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
+                x: self.mid_panel.base.base.x + 20.0,
+                y: alphabet_box_y + 12.0,
+                color: glyphon::Color::rgb(0x88, 0x88, 0x99),
+                bounds: Some([preview_box_x, alphabet_box_y, preview_box_x + preview_box_w, alphabet_box_y + alphabet_box_h]),
+            });
+        }
+
+        if self.select_mode {
             let left_panel_x = self.left_panel.base.base.x;
             let bar_y = self.height as f32 - 48.0 - 10.0;
             labels.push((TextLabel {
@@ -539,11 +443,6 @@ impl Application for TypefaceApp {
         let args: Vec<String> = std::env::args().collect();
         let select_mode = args.iter().any(|arg| arg == "--select");
 
-        let paginator = Paginator::new(vec![
-            "Browse".to_string(),
-            "Keys".to_string(),
-        ]);
-
         let mut search_box = TextBox::new(String::new()).with_multiline(false).with_draw_bg_border(true);
         search_box.font_size = 12.0;
 
@@ -565,7 +464,6 @@ impl Application for TypefaceApp {
 
         let all_fonts = pages::fetch_fonts();
         let mut app = Self {
-            paginator,
             search_box,
             font_list,
             font_buttons: Vec::new(),
@@ -579,7 +477,6 @@ impl Application for TypefaceApp {
             select_mode,
             last_click_idx: None,
             click_timer: 0.0,
-            current_page: Page::Browse,
             all_fonts: all_fonts.clone(),
             families: Vec::new(),
             filtered: Vec::new(),
@@ -681,16 +578,6 @@ impl Application for TypefaceApp {
             AppMessage::Exit => {
                 *exit = true;
             }
-            AppMessage::SwitchPage(page) => {
-                self.current_page = page;
-                let page_idx = match page {
-                    Page::Browse => 0,
-                    Page::Keybindings => 1,
-                };
-                self.paginator.set_selected_page(page_idx);
-                *needs_rebuild = true;
-                self.needs_rebuild = true;
-            }
             AppMessage::SelectFamily(idx) => {
                 if idx < self.filtered.len() {
                     self.selected_idx = Some(idx);
@@ -774,17 +661,13 @@ impl Application for TypefaceApp {
         }
     }
 
-    fn tick(&mut self, dt: f32, needs_rebuild: &mut bool) {
+    fn tick(&mut self, dt: f32, _needs_rebuild: &mut bool) {
         if self.click_timer > 0.0 {
             self.click_timer -= dt;
         }
-        if self.paginator.tick(dt, &mut self.ui_context) {
-            *needs_rebuild = true;
-            self.needs_rebuild = true;
-        }
     }
 
-    fn view(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, size: LogicalSize, scale: f64) {
+        fn view(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, size: LogicalSize, scale: f64) {
         let size_changed = self.width != size.width as u32 || self.height != size.height as u32 || self.scale_factor != scale;
         if self.needs_rebuild || size_changed {
             self.width = size.width as u32;
@@ -795,8 +678,7 @@ impl Application for TypefaceApp {
         let w_f32 = self.width as f32;
         let h_f32 = self.height as f32;
 
-        let sidebar_w = self.paginator.sidebar_w();
-        let left_panel_x = sidebar_w + 10.0;
+        let left_panel_x = 10.0;
         let left_panel_w = 270.0;
         let right_panel_w = 286.0;
         let right_panel_x = w_f32 - 10.0 - right_panel_w;
@@ -815,7 +697,6 @@ impl Application for TypefaceApp {
             self.root_window.set_rect(0.0, 0.0, w_f32, h_f32);
             self.root_window.background_color = Some(cce_ui::colors::page_low_color());
             self.root_window.radius = cce_ui::colors::backplate_corner_radius();
-            self.paginator.set_rect(0.0, 0.0, sidebar_w, h_f32);
 
             // Position panel Plates
             self.left_panel.set_rect(left_panel_x, 10.0, left_panel_w, content_h);
@@ -823,52 +704,50 @@ impl Application for TypefaceApp {
             self.right_panel.set_rect(right_panel_x, 10.0, right_panel_w, content_h);
 
             let bar_y = h_f32 - select_bar_h - 10.0;
-            self.bottom_bar.set_rect(left_panel_x, bar_y, w_f32 - 76.0, select_bar_h);
+            self.bottom_bar.set_rect(left_panel_x, bar_y, w_f32 - 20.0, select_bar_h);
 
             // Configure Plate visibility
-            self.left_panel.visible = self.current_page == Page::Browse;
-            self.mid_panel.visible = self.current_page == Page::Browse;
-            self.right_panel.visible = self.current_page == Page::Browse;
-            self.bottom_bar.visible = self.current_page == Page::Browse && self.select_mode;
+            self.left_panel.visible = true;
+            self.mid_panel.visible = true;
+            self.right_panel.visible = true;
+            self.bottom_bar.visible = self.select_mode;
 
-            if self.current_page == Page::Browse {
-                // Search box
-                self.search_box.set_rect(left_panel_x + 10.0, 10.0, left_panel_w - 20.0, 26.0);
+            // Search box
+            self.search_box.set_rect(left_panel_x + 10.0, 10.0, left_panel_w - 20.0, 26.0);
 
-                // Scrolling List
-                let list_x = left_panel_x + 10.0;
-                let list_y = 60.0;
-                let list_w = left_panel_w - 20.0;
-                let list_h = (content_h - 50.0).max(100.0);
-                self.font_list.set_rect(list_x, list_y, list_w, list_h);
-                self.font_list.update_bounds(self.filtered.len(), list_y, list_h);
+            // Scrolling List
+            let list_x = left_panel_x + 10.0;
+            let list_y = 60.0;
+            let list_w = left_panel_w - 20.0;
+            let list_h = (content_h - 50.0).max(100.0);
+            self.font_list.set_rect(list_x, list_y, list_w, list_h);
+            self.font_list.update_bounds(self.filtered.len(), list_y, list_h);
 
-                // Layout list buttons
-                for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                    if let Some(draw_y) = self.font_list.get_item_draw_y(idx, 0.0) {
-                        btn.set_rect(list_x + 4.0, draw_y, list_w - 8.0, 24.0);
-                    } else {
-                        btn.set_rect(-9999.0, -9999.0, 0.0, 0.0);
-                    }
+            // Layout list buttons
+            for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
+                if let Some(draw_y) = self.font_list.get_item_draw_y(idx, 0.0) {
+                    btn.set_rect(list_x + 4.0, draw_y, list_w - 8.0, 24.0);
+                } else {
+                    btn.set_rect(-9999.0, -9999.0, 0.0, 0.0);
                 }
+            }
 
-                // Preview panel widgets
-                let style_dropdown_h = cce_ui::layout::dropdown_height() + cce_ui::widget::label_offset(&self.style_dropdown);
-                self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, mid_panel_w - 20.0, style_dropdown_h);
+            // Preview panel widgets
+            let style_dropdown_h = cce_ui::layout::dropdown_height() + cce_ui::widget::label_offset(&self.style_dropdown);
+            self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, mid_panel_w - 20.0, style_dropdown_h);
 
-                let size_slider_h = cce_ui::layout::slider_height() + cce_ui::widget::label_offset(&self.size_slider);
-                self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, mid_panel_w - 20.0, size_slider_h);
-                let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
-                self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, preview_box_h);
+            let size_slider_h = cce_ui::layout::slider_height() + cce_ui::widget::label_offset(&self.size_slider);
+            self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, mid_panel_w - 20.0, size_slider_h);
+            let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
+            self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, preview_box_h);
 
-                // Details panel buttons
-                self.btn_open_folder.set_rect(right_panel_x + 10.0, 200.0, 110.0, 28.0);
-                self.btn_remove_font.set_rect(right_panel_x + 130.0, 200.0, 110.0, 28.0);
+            // Details panel buttons
+            self.btn_open_folder.set_rect(right_panel_x + 10.0, 200.0, 110.0, 28.0);
+            self.btn_remove_font.set_rect(right_panel_x + 130.0, 200.0, 110.0, 28.0);
 
-                if self.select_mode {
-                    self.select_cancel_btn.set_rect(w_f32 - 190.0, bar_y + 10.0, 80.0, 28.0);
-                    self.select_confirm_btn.set_rect(w_f32 - 100.0, bar_y + 10.0, 80.0, 28.0);
-                }
+            if self.select_mode {
+                self.select_cancel_btn.set_rect(w_f32 - 190.0, bar_y + 10.0, 80.0, 28.0);
+                self.select_confirm_btn.set_rect(w_f32 - 100.0, bar_y + 10.0, 80.0, 28.0);
             }
 
             self.rebuild_hierarchy();
@@ -878,7 +757,6 @@ impl Application for TypefaceApp {
 
         let base_low = cce_ui::colors::page_low_color();
         let border_col = cce_ui::colors::color_borders_color();
-        let sidebar_bg = cce_ui::colors::sidebar_bg_color();
 
         // 1. General window background
         let bg_color = [
@@ -889,11 +767,7 @@ impl Application for TypefaceApp {
         ];
         quads.push((0.0, 0.0, w_f32, h_f32, bg_color));
 
-        // 2. Sidebar background panel
-        quads.push((0.0, 0.0, sidebar_w, h_f32, sidebar_bg));
-        quads.push((sidebar_w, 0.0, 1.0, h_f32, border_col)); // sidebar separator
-
-        // Draw active containers and all child widgets (including paginator and panel plates)
+        // Draw active containers and all child widgets (including panel plates)
         for &child_ptr in &self.root_window.children {
             unsafe {
                 if let Some(child) = child_ptr.as_ref() {
@@ -905,70 +779,62 @@ impl Application for TypefaceApp {
         }
 
         // 5. Page Content Outline Borders
-        if self.current_page == Page::Browse {
-            // Left Panel Borders
-            quads.push((left_panel_x, 10.0, left_panel_w, 1.0, border_col));
-            quads.push((left_panel_x, 10.0 + content_h, left_panel_w, 1.0, border_col));
-            quads.push((left_panel_x, 10.0, 1.0, content_h, border_col));
-            quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col));
+        // Left Panel Borders
+        quads.push((left_panel_x, 10.0, left_panel_w, 1.0, border_col));
+        quads.push((left_panel_x, 10.0 + content_h, left_panel_w, 1.0, border_col));
+        quads.push((left_panel_x, 10.0, 1.0, content_h, border_col));
+        quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col));
 
-            // Middle Panel Borders
-            quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, border_col));
-            quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col));
-            quads.push((mid_panel_x, 10.0, 1.0, content_h, border_col));
-            quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col));
+        // Middle Panel Borders
+        quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, border_col));
+        quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col));
+        quads.push((mid_panel_x, 10.0, 1.0, content_h, border_col));
+        quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col));
 
-            if self.selected_family.is_some() {
-                // Alphabet preview box background & borders
-                let preview_box_x = mid_panel_x + 10.0;
-                let preview_box_w = mid_panel_w - 20.0;
-                let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
-                let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+        if self.selected_family.is_some() {
+            // Alphabet preview box background & borders
+            let preview_box_x = mid_panel_x + 10.0;
+            let preview_box_w = mid_panel_w - 20.0;
+            let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
+            let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
 
-                let alphabet_bg = [
-                    base_low[0] * 0.9,
-                    base_low[1] * 0.9,
-                    base_low[2] * 0.9,
-                    1.0,
-                ];
-                let alphabet_border = [
-                    border_col[0] * 0.85,
-                    border_col[1] * 0.85,
-                    border_col[2] * 0.85,
-                    1.0,
-                ];
+            let alphabet_bg = [
+                base_low[0] * 0.9,
+                base_low[1] * 0.9,
+                base_low[2] * 0.9,
+                1.0,
+            ];
+            let alphabet_border = [
+                border_col[0] * 0.85,
+                border_col[1] * 0.85,
+                border_col[2] * 0.85,
+                1.0,
+            ];
 
-                quads.push((preview_box_x, alphabet_box_y, preview_box_w, alphabet_box_h, alphabet_bg)); // alphabet box bg
-                quads.push((preview_box_x, alphabet_box_y, preview_box_w, 1.0, alphabet_border));
-                quads.push((preview_box_x, alphabet_box_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border));
-                quads.push((preview_box_x, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
-                quads.push((preview_box_x + preview_box_w, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
-            }
+            quads.push((preview_box_x, alphabet_box_y, preview_box_w, alphabet_box_h, alphabet_bg)); // alphabet box bg
+            quads.push((preview_box_x, alphabet_box_y, preview_box_w, 1.0, alphabet_border));
+            quads.push((preview_box_x, alphabet_box_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border));
+            quads.push((preview_box_x, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
+            quads.push((preview_box_x + preview_box_w, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
+        }
 
-            // Right Panel Borders
-            quads.push((right_panel_x, 10.0, right_panel_w, 1.0, border_col));
-            quads.push((right_panel_x, 10.0 + content_h, right_panel_w, 1.0, border_col));
-            quads.push((right_panel_x, 10.0, 1.0, content_h, border_col));
-            quads.push((right_panel_x + right_panel_w, 10.0, 1.0, content_h, border_col));
+        // Right Panel Borders
+        quads.push((right_panel_x, 10.0, right_panel_w, 1.0, border_col));
+        quads.push((right_panel_x, 10.0 + content_h, right_panel_w, 1.0, border_col));
+        quads.push((right_panel_x, 10.0, 1.0, content_h, border_col));
+        quads.push((right_panel_x + right_panel_w, 10.0, 1.0, content_h, border_col));
 
-            if self.select_mode {
-                let bar_y = h_f32 - select_bar_h - 10.0;
-                // Draw bottom bar separator and side borders
-                quads.push((left_panel_x, bar_y, w_f32 - 76.0, 1.0, border_col));
-                quads.push((left_panel_x, bar_y, 1.0, 48.0, border_col));
-                quads.push((w_f32 - 10.0, bar_y, 1.0, 48.0, border_col));
-            }
-        } else if self.current_page == Page::Keybindings {
-            // Keybindings page borders
-            quads.push((210.0, 10.0, w_f32 - 220.0, 1.0, border_col));
-            quads.push((210.0, h_f32 - 10.0, w_f32 - 220.0, 1.0, border_col));
-            quads.push((210.0, 10.0, 1.0, h_f32 - 20.0, border_col));
-            quads.push((w_f32 - 10.0, 10.0, 1.0, h_f32 - 20.0, border_col));
+        if self.select_mode {
+            let bar_y = h_f32 - select_bar_h - 10.0;
+            // Draw bottom bar separator and side borders
+            quads.push((left_panel_x, bar_y, w_f32 - 20.0, 1.0, border_col));
+            quads.push((left_panel_x, bar_y, 1.0, 48.0, border_col));
+            quads.push((w_f32 - 10.0, bar_y, 1.0, 48.0, border_col));
         }
     }
 
     fn overlay_quads(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, _size: LogicalSize, _scale: f64) {
-        if self.current_page == Page::Browse && self.selected_family.is_some() {
+        if self.selected_family.is_some() {
             // Style Dropdown popover rendered on top of everything
             let mut pc = cce_ui::layout::PopoverCollector::new();
             self.style_dropdown.render_popover(&mut pc);
@@ -1046,59 +912,46 @@ impl Application for TypefaceApp {
             }
         }
 
-        // Process side effects / clicks
-        if let Some((new_page, _)) = self.paginator.menu_click() {
-            self.paginator.set_selected_page(new_page);
-            let target_page = match new_page {
-                0 => Page::Browse,
-                1 => Page::Keybindings,
-                _ => Page::Browse,
-            };
-            msg_out = Some(AppMessage::SwitchPage(target_page));
+        if self.selected_family.is_some() && self.style_dropdown.take_change() {
+            msg_out = Some(AppMessage::SelectStyle(self.style_dropdown.selected));
         }
 
-        if self.current_page == Page::Browse {
-            if self.selected_family.is_some() && self.style_dropdown.take_change() {
-                msg_out = Some(AppMessage::SelectStyle(self.style_dropdown.selected));
-            }
-
-            for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                if btn.rect().0 > -9000.0 && btn.take_click() {
-                    if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
-                        let selected = self.filtered[idx].clone();
-                        print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
-                        std::process::exit(0);
-                    }
-                    self.last_click_idx = Some(idx);
-                    self.click_timer = 0.35;
-                    msg_out = Some(AppMessage::SelectFamily(idx));
-                    break;
-                }
-            }
-
-            let old_size = self.preview_box.font_size;
-            let new_size = self.size_slider.get_scaled_value();
-            if (new_size - old_size).abs() > 0.001 {
-                self.preview_box.font_size = new_size;
-                msg_out = Some(AppMessage::FontSizeChanged);
-            }
-
-            if self.btn_open_folder.take_click() {
-                msg_out = Some(AppMessage::OpenFolder);
-            }
-            if self.btn_remove_font.take_click() {
-                msg_out = Some(AppMessage::RemoveFont);
-            }
-
-            if self.select_mode {
-                if self.select_cancel_btn.take_click() {
-                    std::process::exit(1);
-                }
-                if self.select_confirm_btn.take_click() {
-                    let selected = self.selected_family.clone().unwrap_or_default();
+        for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
+            if btn.rect().0 > -9000.0 && btn.take_click() {
+                if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
+                    let selected = self.filtered[idx].clone();
                     print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
                     std::process::exit(0);
                 }
+                self.last_click_idx = Some(idx);
+                self.click_timer = 0.35;
+                msg_out = Some(AppMessage::SelectFamily(idx));
+                break;
+            }
+        }
+
+        let old_size = self.preview_box.font_size;
+        let new_size = self.size_slider.get_scaled_value();
+        if (new_size - old_size).abs() > 0.001 {
+            self.preview_box.font_size = new_size;
+            msg_out = Some(AppMessage::FontSizeChanged);
+        }
+
+        if self.btn_open_folder.take_click() {
+            msg_out = Some(AppMessage::OpenFolder);
+        }
+        if self.btn_remove_font.take_click() {
+            msg_out = Some(AppMessage::RemoveFont);
+        }
+
+        if self.select_mode {
+            if self.select_cancel_btn.take_click() {
+                std::process::exit(1);
+            }
+            if self.select_confirm_btn.take_click() {
+                let selected = self.selected_family.clone().unwrap_or_default();
+                print!("{} {:.0}", selected, self.size_slider.get_scaled_value());
+                std::process::exit(0);
             }
         }
 
@@ -1141,27 +994,17 @@ impl Application for TypefaceApp {
         if event.ctrl && event.state == ElementState::Pressed {
             if let Key::Character(ref ch) = event.logical_key {
                 match ch.to_lowercase().as_str() {
-                    "1" => {
-                        msg_out = Some(AppMessage::SwitchPage(Page::Browse));
-                        handled = true;
-                    }
-                    "2" => {
-                        msg_out = Some(AppMessage::SwitchPage(Page::Keybindings));
-                        handled = true;
-                    }
                     "r" => {
                         msg_out = Some(AppMessage::RefreshFonts);
                         handled = true;
                     }
                     "f" => {
-                        self.current_page = Page::Browse;
                         self.search_box.focus();
                         self.ui_context.set_focused(&mut self.search_box);
                         self.preview_box.unfocus();
                         handled = true;
                     }
                     "e" => {
-                        self.current_page = Page::Browse;
                         self.preview_box.focus();
                         self.ui_context.set_focused(&mut self.preview_box);
                         self.search_box.unfocus();
@@ -1204,7 +1047,7 @@ impl Application for TypefaceApp {
             }
         }
 
-        if !handled && self.current_page == Page::Browse {
+        if !handled {
             // Arrow navigation
             let direction = match event.logical_key {
                 Key::Named(NamedKey::ArrowUp) => Some(BrowseNavigation::Up),
@@ -1228,7 +1071,7 @@ impl Application for TypefaceApp {
         }
 
         // TextBox and other focused widgets input propagation
-        if !handled && self.current_page == Page::Browse {
+        if !handled {
             let old_search_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
             
             for &child_ptr in &self.root_window.children {
