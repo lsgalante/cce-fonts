@@ -5,7 +5,7 @@ use glyphon::{FontSystem, Buffer, Metrics, Attrs};
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
-    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, Dropdown, Slider,
+    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, ScrollBox, Dropdown, Slider,
     Backplate, Plate
 };
 use cce_ui::widget::focus::link_parent_child;
@@ -78,8 +78,7 @@ struct TypefaceApp {
     // Containers
     root_window: Backplate,
     left_panel: Plate,
-    mid_panel: Plate,
-    right_panel: Plate,
+    mid_panel: ScrollBox,
     bottom_bar: Plate,
     ui_context: cce_ui::context::UiContext,
 }
@@ -134,13 +133,11 @@ impl TypefaceApp {
         self.root_window.clear_children(ctx);
         self.left_panel.clear_children(ctx);
         self.mid_panel.clear_children(ctx);
-        self.right_panel.clear_children(ctx);
         self.bottom_bar.clear_children(ctx);
 
         // 1. Link active page-level containers to root
         link_parent_child(&mut self.root_window, &mut self.left_panel, ctx);
         link_parent_child(&mut self.root_window, &mut self.mid_panel, ctx);
-        link_parent_child(&mut self.root_window, &mut self.right_panel, ctx);
         
         if self.select_mode {
             link_parent_child(&mut self.root_window, &mut self.bottom_bar, ctx);
@@ -159,15 +156,19 @@ impl TypefaceApp {
 
         // Middle Panel (Preview)
         if self.selected_family.is_some() {
-            link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
-        }
-
-        // Right Panel (Details)
-        if self.selected_family.is_some() {
-            link_parent_child(&mut self.right_panel, &mut self.btn_open_folder, ctx);
-            link_parent_child(&mut self.right_panel, &mut self.btn_remove_font, ctx);
+            if self.btn_open_folder.rect().0 > -9000.0 {
+                link_parent_child(&mut self.mid_panel, &mut self.btn_open_folder, ctx);
+                link_parent_child(&mut self.mid_panel, &mut self.btn_remove_font, ctx);
+            }
+            if self.style_dropdown.rect().0 > -9000.0 {
+                link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
+            }
+            if self.size_slider.rect().0 > -9000.0 {
+                link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
+            }
+            if self.preview_box.rect().0 > -9000.0 {
+                link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
+            }
         }
 
         // Bottom bar
@@ -312,8 +313,30 @@ impl TypefaceApp {
 
         // Page Content
         labels.extend(self.left_panel.text_labels_with_bounds(&self.ui_context));
-        labels.extend(self.mid_panel.text_labels_with_bounds(&self.ui_context));
-        labels.extend(self.right_panel.text_labels_with_bounds(&self.ui_context));
+
+        // Clamped middle panel labels
+        let mid_panel_x = self.mid_panel.base.x;
+        let mid_panel_w = self.mid_panel.base.w;
+        let mid_panel_h = self.mid_panel.base.h;
+        let mid_viewport = [mid_panel_x, 10.0, mid_panel_x + mid_panel_w, 10.0 + mid_panel_h];
+        let mid_labels = self.mid_panel.text_labels_with_bounds(&self.ui_context);
+        for (label, bounds) in mid_labels {
+            let clamped_bounds = match bounds {
+                Some(b) => {
+                    let x0 = b[0].max(mid_viewport[0]);
+                    let y0 = b[1].max(mid_viewport[1]);
+                    let x1 = b[2].min(mid_viewport[2]);
+                    let y1 = b[3].min(mid_viewport[3]);
+                    if x0 < x1 && y0 < y1 {
+                        Some([x0, y0, x1, y1])
+                    } else {
+                        continue; // Completely clipped
+                    }
+                }
+                None => Some(mid_viewport),
+            };
+            labels.push((label, clamped_bounds));
+        }
 
         if self.select_mode {
             labels.extend(self.bottom_bar.text_labels_with_bounds(&self.ui_context));
@@ -329,13 +352,16 @@ impl TypefaceApp {
                     (color[1] * 255.0).clamp(0.0, 255.0) as u8,
                     (color[2] * 255.0).clamp(0.0, 255.0) as u8,
                 ];
+                let pop_x = tx;
+                let pop_y = ty;
+                let popover_bounds = Some(mid_viewport);
                 labels.push((TextLabel {
                     text: content,
-                    x: tx,
-                    y: ty,
+                    x: pop_x,
+                    y: pop_y,
                     font_size: size,
                     color: color_u8,
-                }, None));
+                }, popover_bounds));
             }
         }
 
@@ -368,19 +394,27 @@ impl TypefaceApp {
                 weight_val,
             );
             
-            let mid_panel_w = self.right_panel.base.base.x - 12.0 - self.mid_panel.base.base.x;
-            let preview_box_x = self.mid_panel.base.base.x + 10.0;
+            let preview_box_x = mid_panel_x + 10.0;
             let preview_box_w = mid_panel_w - 20.0;
-            let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
+            
+            let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
             let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+            let scroll_y = self.mid_panel.scroll_y;
+            let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
 
-            self.text_items.push(TextItem {
-                buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
-                x: self.mid_panel.base.base.x + 20.0,
-                y: alphabet_box_y + 12.0,
-                color: glyphon::Color::rgb(0x88, 0x88, 0x99),
-                bounds: Some([preview_box_x, alphabet_box_y, preview_box_x + preview_box_w, alphabet_box_y + alphabet_box_h]),
-            });
+            let viewport_top = 10.0;
+            let viewport_bottom = 10.0 + mid_panel_h;
+            if alphabet_draw_y + alphabet_box_h >= viewport_top && alphabet_draw_y <= viewport_bottom {
+                let bounds_y_start = alphabet_draw_y.max(viewport_top);
+                let bounds_y_end = (alphabet_draw_y + alphabet_box_h).min(viewport_bottom);
+                self.text_items.push(TextItem {
+                    buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
+                    x: mid_panel_x + 20.0,
+                    y: alphabet_draw_y + 12.0,
+                    color: glyphon::Color::rgb(0x88, 0x88, 0x99),
+                    bounds: Some([preview_box_x, bounds_y_start, preview_box_x + preview_box_w, bounds_y_end]),
+                });
+            }
         }
 
         if self.select_mode {
@@ -508,8 +542,7 @@ impl Application for TypefaceApp {
                     .with_radius(win_radius)
             },
             left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
-            mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
-            right_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            mid_panel: ScrollBox::new(),
             bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             ui_context: cce_ui::context::UiContext::new(),
         };
@@ -680,10 +713,8 @@ impl Application for TypefaceApp {
 
         let left_panel_x = 10.0;
         let left_panel_w = 270.0;
-        let right_panel_w = 286.0;
-        let right_panel_x = w_f32 - 10.0 - right_panel_w;
         let mid_panel_x = left_panel_x + left_panel_w + 12.0;
-        let mid_panel_w = right_panel_x - 12.0 - mid_panel_x;
+        let mid_panel_w = w_f32 - 10.0 - mid_panel_x;
 
         let select_bar_h = 48.0;
         let content_h = if self.select_mode {
@@ -701,15 +732,15 @@ impl Application for TypefaceApp {
             // Position panel Plates
             self.left_panel.set_rect(left_panel_x, 10.0, left_panel_w, content_h);
             self.mid_panel.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
-            self.right_panel.set_rect(right_panel_x, 10.0, right_panel_w, content_h);
+
+            let mid_content_h = if self.select_mode { 440.0 } else { 520.0 };
+            self.mid_panel.update_bounds(mid_content_h, 10.0, content_h);
 
             let bar_y = h_f32 - select_bar_h - 10.0;
             self.bottom_bar.set_rect(left_panel_x, bar_y, w_f32 - 20.0, select_bar_h);
 
             // Configure Plate visibility
             self.left_panel.visible = true;
-            self.mid_panel.visible = true;
-            self.right_panel.visible = true;
             self.bottom_bar.visible = self.select_mode;
 
             // Search box
@@ -732,18 +763,48 @@ impl Application for TypefaceApp {
                 }
             }
 
-            // Preview panel widgets
+            // Preview panel widgets layout
             let style_dropdown_h = cce_ui::layout::dropdown_height() + cce_ui::widget::label_offset(&self.style_dropdown);
-            self.style_dropdown.set_rect(mid_panel_x + 10.0, 65.0, mid_panel_w - 20.0, style_dropdown_h);
-
             let size_slider_h = cce_ui::layout::slider_height() + cce_ui::widget::label_offset(&self.size_slider);
-            self.size_slider.set_rect(mid_panel_x + 10.0, 120.0, mid_panel_w - 20.0, size_slider_h);
             let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
-            self.preview_box.set_rect(mid_panel_x + 10.0, 190.0, mid_panel_w - 20.0, preview_box_h);
 
-            // Details panel buttons
-            self.btn_open_folder.set_rect(right_panel_x + 10.0, 200.0, 110.0, 28.0);
-            self.btn_remove_font.set_rect(right_panel_x + 130.0, 200.0, 110.0, 28.0);
+            let scroll_y = self.mid_panel.scroll_y;
+            let viewport_top = 10.0;
+            let viewport_bottom = 10.0 + content_h;
+
+            // Open Folder & Remove Font buttons (virtual_y = 20.0, h = 28.0)
+            let btn_draw_y = 10.0 + 20.0 - scroll_y;
+            if btn_draw_y + 28.0 >= viewport_top && btn_draw_y <= viewport_bottom {
+                self.btn_open_folder.set_rect(mid_panel_x + 10.0, btn_draw_y, 110.0, 28.0);
+                self.btn_remove_font.set_rect(mid_panel_x + 130.0, btn_draw_y, 110.0, 28.0);
+            } else {
+                self.btn_open_folder.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.btn_remove_font.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+            }
+
+            // Style dropdown (virtual_y = 65.0, h = style_dropdown_h)
+            let dropdown_draw_y = 10.0 + 65.0 - scroll_y;
+            if dropdown_draw_y + style_dropdown_h >= viewport_top && dropdown_draw_y <= viewport_bottom {
+                self.style_dropdown.set_rect(mid_panel_x + 10.0, dropdown_draw_y, mid_panel_w - 20.0, style_dropdown_h);
+            } else {
+                self.style_dropdown.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+            }
+
+            // Size slider (virtual_y = 120.0, h = size_slider_h)
+            let slider_draw_y = 10.0 + 120.0 - scroll_y;
+            if slider_draw_y + size_slider_h >= viewport_top && slider_draw_y <= viewport_bottom {
+                self.size_slider.set_rect(mid_panel_x + 10.0, slider_draw_y, mid_panel_w - 20.0, size_slider_h);
+            } else {
+                self.size_slider.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+            }
+
+            // Preview box (virtual_y = 190.0, h = preview_box_h)
+            let preview_draw_y = 10.0 + 190.0 - scroll_y;
+            if preview_draw_y + preview_box_h >= viewport_top && preview_draw_y <= viewport_bottom {
+                self.preview_box.set_rect(mid_panel_x + 10.0, preview_draw_y, mid_panel_w - 20.0, preview_box_h);
+            } else {
+                self.preview_box.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+            }
 
             if self.select_mode {
                 self.select_cancel_btn.set_rect(w_f32 - 190.0, bar_y + 10.0, 80.0, 28.0);
@@ -785,44 +846,52 @@ impl Application for TypefaceApp {
         quads.push((left_panel_x, 10.0, 1.0, content_h, border_col));
         quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col));
 
-        // Middle Panel Borders
-        quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, border_col));
-        quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col));
-        quads.push((mid_panel_x, 10.0, 1.0, content_h, border_col));
-        quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col));
+        // The ScrollBox now automatically draws its own borders and scrollbar.
 
         if self.selected_family.is_some() {
-            // Alphabet preview box background & borders
-            let preview_box_x = mid_panel_x + 10.0;
-            let preview_box_w = mid_panel_w - 20.0;
-            let alphabet_box_y = if self.select_mode { 320.0 } else { 380.0 };
+            let mid_panel_h = self.mid_panel.base.h;
+            let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
             let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+            let scroll_y = self.mid_panel.scroll_y;
+            let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
 
-            let alphabet_bg = [
-                base_low[0] * 0.9,
-                base_low[1] * 0.9,
-                base_low[2] * 0.9,
-                1.0,
-            ];
-            let alphabet_border = [
-                border_col[0] * 0.85,
-                border_col[1] * 0.85,
-                border_col[2] * 0.85,
-                1.0,
-            ];
+            let viewport_top = 10.0;
+            let viewport_bottom = 10.0 + mid_panel_h;
 
-            quads.push((preview_box_x, alphabet_box_y, preview_box_w, alphabet_box_h, alphabet_bg)); // alphabet box bg
-            quads.push((preview_box_x, alphabet_box_y, preview_box_w, 1.0, alphabet_border));
-            quads.push((preview_box_x, alphabet_box_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border));
-            quads.push((preview_box_x, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
-            quads.push((preview_box_x + preview_box_w, alphabet_box_y, 1.0, alphabet_box_h, alphabet_border));
+            if alphabet_draw_y + alphabet_box_h >= viewport_top && alphabet_draw_y <= viewport_bottom {
+                let draw_y_start = alphabet_draw_y.max(viewport_top);
+                let draw_y_end = (alphabet_draw_y + alphabet_box_h).min(viewport_bottom);
+                let draw_h = draw_y_end - draw_y_start;
+
+                if draw_h > 0.0 {
+                    let preview_box_x = mid_panel_x + 10.0;
+                    let preview_box_w = mid_panel_w - 20.0;
+                    let alphabet_bg = [
+                        base_low[0] * 0.9,
+                        base_low[1] * 0.9,
+                        base_low[2] * 0.9,
+                        1.0,
+                    ];
+                    let alphabet_border = [
+                        border_col[0] * 0.85,
+                        border_col[1] * 0.85,
+                        border_col[2] * 0.85,
+                        1.0,
+                    ];
+
+                    quads.push((preview_box_x, draw_y_start, preview_box_w, draw_h, alphabet_bg)); // alphabet box bg
+                    
+                    if alphabet_draw_y >= viewport_top {
+                        quads.push((preview_box_x, alphabet_draw_y, preview_box_w, 1.0, alphabet_border)); // Top border
+                    }
+                    if alphabet_draw_y + alphabet_box_h <= viewport_bottom {
+                        quads.push((preview_box_x, alphabet_draw_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border)); // Bottom border
+                    }
+                    quads.push((preview_box_x, draw_y_start, 1.0, draw_h, alphabet_border)); // Left border
+                    quads.push((preview_box_x + preview_box_w, draw_y_start, 1.0, draw_h, alphabet_border)); // Right border
+                }
+            }
         }
-
-        // Right Panel Borders
-        quads.push((right_panel_x, 10.0, right_panel_w, 1.0, border_col));
-        quads.push((right_panel_x, 10.0 + content_h, right_panel_w, 1.0, border_col));
-        quads.push((right_panel_x, 10.0, 1.0, content_h, border_col));
-        quads.push((right_panel_x + right_panel_w, 10.0, 1.0, content_h, border_col));
 
         if self.select_mode {
             let bar_y = h_f32 - select_bar_h - 10.0;
