@@ -467,6 +467,10 @@ impl Application for TypefaceApp {
         Some(&self.ui_context)
     }
 
+    fn view_rounded_quads(&mut self, quads: &mut Vec<(f32, f32, f32, f32, f32, [f32; 4], (bool, bool, bool, bool))>, _size: LogicalSize, _scale: f64) {
+        quads.extend(self.root_window.all_rounded_quads(&self.ui_context));
+    }
+
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
         cce_ui::scale::set_scale_factor(1.0);
         // Parse command line arguments
