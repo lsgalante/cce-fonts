@@ -745,9 +745,9 @@ impl Application for TypefaceApp {
 
             // Scrolling List
             let list_x = left_panel_x + 10.0;
-            let list_y = 60.0;
+            let list_y = 46.0;
             let list_w = left_panel_w - 20.0;
-            let list_h = (content_h - 50.0).max(100.0);
+            let list_h = (content_h - 36.0).max(100.0);
             self.font_list.set_rect(list_x, list_y, list_w, list_h);
             self.font_list.update_bounds(self.filtered.len(), list_y, list_h);
 
@@ -826,15 +826,7 @@ impl Application for TypefaceApp {
         quads.push((0.0, 0.0, w_f32, h_f32, bg_color));
 
         // Draw active containers and all child widgets (including panel plates)
-        for &child_ptr in &self.root_window.children {
-            unsafe {
-                if let Some(child) = child_ptr.as_ref() {
-                    if child.visible() {
-                        quads.extend(child.extra_quads());
-                    }
-                }
-            }
-        }
+        quads.extend(self.root_window.all_quads(&self.ui_context));
 
         // 5. Page Content Outline Borders
         // Left Panel Borders
