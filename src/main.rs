@@ -900,10 +900,11 @@ impl Application for TypefaceApp {
 
         if self.select_mode {
             let bar_y = h_f32 - select_bar_h - 10.0;
-            // Draw bottom bar separator and side borders
+            // Draw bottom bar separator, side borders, and bottom border
             quads.push((left_panel_x, bar_y, w_f32 - 20.0, 1.0, border_col));
-            quads.push((left_panel_x, bar_y, 1.0, 48.0, border_col));
-            quads.push((w_f32 - 10.0, bar_y, 1.0, 48.0, border_col));
+            quads.push((left_panel_x, bar_y, 1.0, select_bar_h, border_col));
+            quads.push((w_f32 - 10.0, bar_y, 1.0, select_bar_h, border_col));
+            quads.push((left_panel_x, bar_y + select_bar_h, w_f32 - 20.0, 1.0, border_col));
         }
     }
 
