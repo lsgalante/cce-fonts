@@ -724,7 +724,6 @@ impl Application for TypefaceApp {
             cce_ui::scale::set_scale_factor(scale as f32);
             self.root_window.set_rect(0.0, 0.0, w_f32, h_f32);
             self.root_window.background_color = Some(cce_ui::colors::page_low_color());
-            self.root_window.radius = cce_ui::colors::backplate_corner_radius();
 
             // Position panel Plates
             self.left_panel.set_rect(left_panel_x, 10.0, left_panel_w, content_h);
