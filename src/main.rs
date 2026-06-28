@@ -78,7 +78,8 @@ struct TypefaceApp {
     // Containers
     root_window: Backplate,
     left_panel: Plate,
-    mid_panel: ScrollBox,
+    mid_panel: Plate,
+    mid_scroll: ScrollBox,
     bottom_bar: Plate,
     ui_context: cce_ui::context::UiContext,
 }
@@ -134,6 +135,7 @@ impl TypefaceApp {
         self.left_panel.clear_children(ctx);
         self.mid_panel.clear_children(ctx);
         self.bottom_bar.clear_children(ctx);
+        self.mid_scroll.clear_children(ctx);
 
         // 1. Link active page-level containers to root
         link_parent_child(&mut self.root_window, &mut self.left_panel, ctx);
@@ -156,19 +158,15 @@ impl TypefaceApp {
 
         // Middle Panel (Preview)
         if self.selected_family.is_some() {
-            if self.btn_open_folder.rect().0 > -9000.0 {
-                link_parent_child(&mut self.mid_panel, &mut self.btn_open_folder, ctx);
-                link_parent_child(&mut self.mid_panel, &mut self.btn_remove_font, ctx);
-            }
-            if self.style_dropdown.rect().0 > -9000.0 {
-                link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
-            }
-            if self.size_slider.rect().0 > -9000.0 {
-                link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
-            }
-            if self.preview_box.rect().0 > -9000.0 {
-                link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
-            }
+            // Link mid_scroll to mid_panel
+            link_parent_child(&mut self.mid_panel, &mut self.mid_scroll, ctx);
+
+            // Link interactive elements to mid_panel (Plate) so it routes events to them
+            link_parent_child(&mut self.mid_panel, &mut self.btn_open_folder, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.btn_remove_font, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.size_slider, ctx);
+            link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
         }
 
         // Bottom bar
@@ -315,9 +313,7 @@ impl TypefaceApp {
         labels.extend(self.left_panel.text_labels_with_bounds(&self.ui_context));
 
         // Clamped middle panel labels
-        let mid_panel_x = self.mid_panel.base.x;
-        let mid_panel_w = self.mid_panel.base.w;
-        let mid_panel_h = self.mid_panel.base.h;
+        let (mid_panel_x, _, mid_panel_w, mid_panel_h) = self.mid_panel.rect();
         let mid_viewport = [mid_panel_x, 10.0, mid_panel_x + mid_panel_w, 10.0 + mid_panel_h];
         let mid_labels = self.mid_panel.text_labels_with_bounds(&self.ui_context);
         for (label, bounds) in mid_labels {
@@ -399,7 +395,7 @@ impl TypefaceApp {
             
             let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
             let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
-            let scroll_y = self.mid_panel.scroll_y;
+            let scroll_y = self.mid_scroll.scroll_y;
             let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
 
             let viewport_top = 10.0;
@@ -542,7 +538,8 @@ impl Application for TypefaceApp {
                     .with_radius(win_radius)
             },
             left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
-            mid_panel: ScrollBox::new(),
+            mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            mid_scroll: ScrollBox::new(),
             bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             ui_context: cce_ui::context::UiContext::new(),
         };
@@ -732,15 +729,17 @@ impl Application for TypefaceApp {
             // Position panel Plates
             self.left_panel.set_rect(left_panel_x, 10.0, left_panel_w, content_h);
             self.mid_panel.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
+            self.mid_scroll.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
 
             let mid_content_h = if self.select_mode { 440.0 } else { 520.0 };
-            self.mid_panel.update_bounds(mid_content_h, 10.0, content_h);
+            self.mid_scroll.update_bounds(mid_content_h, 10.0, content_h);
 
             let bar_y = h_f32 - select_bar_h - 10.0;
             self.bottom_bar.set_rect(left_panel_x, bar_y, w_f32 - 20.0, select_bar_h);
 
             // Configure Plate visibility
             self.left_panel.visible = true;
+            self.mid_panel.visible = true;
             self.bottom_bar.visible = self.select_mode;
 
             // Search box
@@ -768,7 +767,7 @@ impl Application for TypefaceApp {
             let size_slider_h = cce_ui::layout::slider_height() + cce_ui::widget::label_offset(&self.size_slider);
             let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
 
-            let scroll_y = self.mid_panel.scroll_y;
+            let scroll_y = self.mid_scroll.scroll_y;
             let viewport_top = 10.0;
             let viewport_bottom = 10.0 + content_h;
 
@@ -846,13 +845,19 @@ impl Application for TypefaceApp {
         quads.push((left_panel_x, 10.0, 1.0, content_h, border_col));
         quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col));
 
+        // Middle Panel Borders
+        quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, border_col));
+        quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col));
+        quads.push((mid_panel_x, 10.0, 1.0, content_h, border_col));
+        quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col));
+
         // The ScrollBox now automatically draws its own borders and scrollbar.
 
         if self.selected_family.is_some() {
-            let mid_panel_h = self.mid_panel.base.h;
+            let mid_panel_h = self.mid_panel.base.base.h;
             let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
             let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
-            let scroll_y = self.mid_panel.scroll_y;
+            let scroll_y = self.mid_scroll.scroll_y;
             let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
 
             let viewport_top = 10.0;
