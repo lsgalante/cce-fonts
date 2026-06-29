@@ -998,6 +998,8 @@ impl Application for TypefaceApp {
                 if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
                     let selected = self.filtered[idx].clone();
                     print!("{} {}", selected, self.size_spinbox.value);
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
                     std::process::exit(0);
                 }
                 self.last_click_idx = Some(idx);
@@ -1028,6 +1030,8 @@ impl Application for TypefaceApp {
             if self.select_confirm_btn.take_click() {
                 let selected = self.selected_family.clone().unwrap_or_default();
                 print!("{} {}", selected, self.size_spinbox.value);
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
                 std::process::exit(0);
             }
         }
