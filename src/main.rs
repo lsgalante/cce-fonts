@@ -5,7 +5,7 @@ use glyphon::{FontSystem, Buffer, Metrics, Attrs};
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
-    TextBox, Button, TextLabel, Key, NamedKey, ScrollingList, ScrollBox, Dropdown, Spinbox,
+    TextBox, Button, TextLabel, Key, NamedKey, List, ScrollBox, Dropdown, Spinbox,
     Backplate, Plate
 };
 use cce_ui::widget::focus::link_parent_child;
@@ -34,7 +34,7 @@ enum AppMessage {
 struct TypefaceApp {
     // Browse panel
     search_box: TextBox,
-    font_list: ScrollingList,
+    font_list: List,
     font_buttons: Vec<Button>,
 
     // Preview panel
@@ -480,7 +480,7 @@ impl Application for TypefaceApp {
         let mut search_box = TextBox::new(String::new()).with_multiline(false).with_draw_bg_border(true);
         search_box.font_size = 12.0;
 
-        let font_list = ScrollingList::new(24.0, 4.0);
+        let font_list = List::new(24.0, 4.0);
 
         let style_dropdown = Dropdown::new(Vec::new(), 0).with_label("Style:");
 
