@@ -539,7 +539,16 @@ impl Application for TypefaceApp {
             left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             mid_scroll: ScrollBox::new(),
-            bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
+            bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false).with_engine_layout({
+                // Right-aligned row of buttons, 10px gap, vertically centered, 10px right inset.
+                // The buttons size to their text (Button::intrinsic_size) instead of a fixed 80px.
+                let mut s = cce_ui::scene::layout::Style::row()
+                    .gap(10.0)
+                    .main_align(cce_ui::scene::layout::MainAlign::End)
+                    .cross_align(cce_ui::scene::layout::CrossAlign::Center);
+                s.padding = cce_ui::scene::layout::Edges { left: 0.0, right: 10.0, top: 0.0, bottom: 0.0 };
+                s
+            }),
             ui_context: cce_ui::context::UiContext::new(),
         };
         
@@ -806,8 +815,20 @@ impl Application for TypefaceApp {
             }
 
             if self.select_mode {
-                self.select_cancel_btn.set_rect(w_f32 - 190.0, bar_y + 10.0, 80.0, 28.0);
-                self.select_confirm_btn.set_rect(w_f32 - 100.0, bar_y + 10.0, 80.0, 28.0);
+                // Phase 2b: lay out the bottom bar's buttons via the scene layout engine. They
+                // size to their text and right-align in the bar, instead of fixed 80px slots.
+                let bar_ptr: *mut (dyn cce_ui::widget::Element + 'static) =
+                    &mut self.bottom_bar as *mut _;
+                cce_ui::scene::bridge::layout_subtree(
+                    &self.ui_context,
+                    bar_ptr,
+                    cce_ui::scene::layout::Rect {
+                        x: left_panel_x,
+                        y: bar_y,
+                        width: w_f32 - 20.0,
+                        height: select_bar_h,
+                    },
+                );
             }
 
             self.rebuild_hierarchy();
