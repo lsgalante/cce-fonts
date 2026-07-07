@@ -526,11 +526,7 @@ impl Application for TypefaceApp {
             height: if select_mode { 500 } else { 720 },
             scale_factor: 1.0,
             text_items: Vec::new(),
-            font_system: {
-                let mut fs = FontSystem::new();
-                fs.db_mut().load_fonts_dir(cce_ui::fonts_dir());
-                fs
-            },
+            font_system: cce_ui::create_font_system_with_system_fonts(),
             needs_rebuild: true,
             root_window: {
                 let win_color = cce_ui::colors::page_low_color();
