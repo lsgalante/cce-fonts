@@ -528,7 +528,7 @@ impl Application for TypefaceApp {
             text_items: Vec::new(),
             font_system: {
                 let mut fs = FontSystem::new();
-                fs.db_mut().load_fonts_dir("/home/lsgalante/Dropbox/Fonts");
+                fs.db_mut().load_fonts_dir(cce_ui::fonts_dir());
                 fs
             },
             needs_rebuild: true,
