@@ -434,14 +434,16 @@ impl TypefaceApp {
             }, None));
         }
 
-        // Convert TextLabels to text_items
-        let scale = cce_ui::scale::scale_factor();
+        // Convert TextLabels to text_items via cce-ui's shared buffer factory, which resolves the
+        // font family to an actually-loaded font. (Building buffers with a bare `Attrs::new()`
+        // doesn't resolve a family — cosmic-text then shaped empty runs and nothing rendered.)
         for (label, bounds) in labels {
-            let physical_size = label.font_size * scale;
-            let metrics = Metrics::new(physical_size, physical_size * 1.4);
-            let mut buf = Buffer::new(font_system, metrics);
-            buf.set_text(font_system, &label.text, Attrs::new(), glyphon::Shaping::Advanced);
-            buf.shape_until_scroll(font_system, true);
+            let buf = cce_ui::backend::window_runner::get_text_buffer(
+                font_system,
+                &label.text,
+                label.font_size,
+                Some("monospace"),
+            );
             self.text_items.push(TextItem {
                 buffer: buf,
                 x: label.x,
@@ -469,6 +471,15 @@ impl Application for TypefaceApp {
 
     fn view_rounded_quads(&mut self, quads: &mut Vec<(f32, f32, f32, f32, f32, [f32; 4], (bool, bool, bool, bool))>, _size: LogicalSize, _scale: f64) {
         quads.extend(self.root_window.all_rounded_quads(&self.ui_context));
+    }
+
+    fn display_list(&mut self) -> Option<cce_ui::scene::paint::DisplayList> {
+        // Opt-in A/B for the Phase 3 single paint path (CCE_PAINT_WALK); default-on once verified.
+        if std::env::var("CCE_PAINT_WALK").is_err() {
+            return None;
+        }
+        let root: *mut (dyn cce_ui::widget::Element + 'static) = self.root_window.as_ptr_mut();
+        Some(cce_ui::scene::painter::paint_tree(&self.ui_context, root))
     }
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
