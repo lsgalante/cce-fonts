@@ -39,7 +39,7 @@ struct TypefaceApp {
 
     // Preview panel
     style_dropdown: Dropdown,
-    size_spinbox: Spinbox,
+    size_spinbox: cce_ui::widget::Adapted<cce_ui::widget::Spinbox>,
     preview_box: TextBox,
 
     // Details panel
