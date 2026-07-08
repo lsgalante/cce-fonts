@@ -57,7 +57,11 @@ pub fn count_chars(file: &str) -> usize {
             for range in s.split_whitespace() {
                 if let Some((start, end)) = range.split_once('-') {
                     if let (Ok(s_val), Ok(e_val)) = (u32::from_str_radix(start, 16), u32::from_str_radix(end, 16)) {
-                        count += (e_val - s_val + 1) as usize;
+                        // Guard against malformed/reversed ranges (end < start) — an unsigned
+                        // subtraction there panics and crashes the whole app.
+                        if e_val >= s_val {
+                            count += (e_val - s_val + 1) as usize;
+                        }
                     }
                 } else if let Ok(_) = u32::from_str_radix(range, 16) {
                     count += 1;
