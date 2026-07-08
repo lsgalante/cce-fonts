@@ -35,7 +35,7 @@ struct TypefaceApp {
     // Browse panel
     search_box: TextBox,
     font_list: List,
-    font_buttons: Vec<Button>,
+    font_buttons: Vec<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
 
     // Preview panel
     style_dropdown: Dropdown,
@@ -43,12 +43,12 @@ struct TypefaceApp {
     preview_box: TextBox,
 
     // Details panel
-    btn_open_folder: Button,
-    btn_remove_font: Button,
+    btn_open_folder: cce_ui::widget::Adapted<cce_ui::widget::Button>,
+    btn_remove_font: cce_ui::widget::Adapted<cce_ui::widget::Button>,
 
     // Selection mode buttons
-    select_cancel_btn: Button,
-    select_confirm_btn: Button,
+    select_cancel_btn: cce_ui::widget::Adapted<cce_ui::widget::Button>,
+    select_confirm_btn: cce_ui::widget::Adapted<cce_ui::widget::Button>,
     select_mode: bool,
     last_click_idx: Option<usize>,
     click_timer: f32,
