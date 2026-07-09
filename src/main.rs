@@ -38,7 +38,7 @@ struct TypefaceApp {
     font_buttons: Vec<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
 
     // Preview panel
-    style_dropdown: Dropdown,
+    style_dropdown: cce_ui::widget::Adapted<Dropdown>,
     size_spinbox: cce_ui::widget::Adapted<cce_ui::widget::Spinbox>,
     preview_box: TextBox,
 
