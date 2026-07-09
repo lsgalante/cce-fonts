@@ -482,6 +482,13 @@ impl Application for TypefaceApp {
         Some(cce_ui::scene::painter::paint_tree(&self.ui_context, root))
     }
 
+    /// The font picker previews arbitrary installed families: the engine's render FontSystem
+    /// must contain the system fonts, or preview buffers shaped against this app's
+    /// system-fonts FontSystem carry face IDs the engine can't rasterize (invisible text).
+    fn load_system_fonts(&self) -> bool {
+        true
+    }
+
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
         cce_ui::scale::set_scale_factor(1.0);
         // Parse command line arguments
