@@ -6,9 +6,7 @@ use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, Win
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, Element,
     TextBox, Button, Key, NamedKey, List, ScrollBox, Dropdown, Spinbox,
-    Backplate, Plate
 };
-use cce_ui::widget::focus::link_parent_child;
 
 
 
@@ -78,61 +76,106 @@ struct TypefaceApp {
     font_system: FontSystem,
     needs_rebuild: bool,
 
-    // Containers
-    root_window: Backplate,
-    left_panel: Plate,
-    mid_panel: Plate,
+    // Containers (root Backplate + the three Plates are DISSOLVED: their plates are
+    // prims, their children are dispatched/walked directly, panel rects are computed)
     mid_scroll: ScrollBox,
-    bottom_bar: Plate,
+    widgets_registered: bool,
     ui_context: cce_ui::context::UiContext,
 }
 
 impl TypefaceApp {
-    fn rebuild_hierarchy(&mut self) {
-        let ctx = &mut self.ui_context;
-        self.root_window.clear_children(ctx);
-        self.left_panel.clear_children(ctx);
-        self.mid_panel.clear_children(ctx);
-        self.bottom_bar.clear_children(ctx);
-        self.mid_scroll.clear_children(ctx);
-
-        // 1. Link active page-level containers to root
-        link_parent_child(&mut self.root_window, &mut self.left_panel, ctx);
-        link_parent_child(&mut self.root_window, &mut self.mid_panel, ctx);
-        
-        if self.select_mode {
-            link_parent_child(&mut self.root_window, &mut self.bottom_bar, ctx);
-        }
-
-        // Left Panel (Browse list)
-        link_parent_child(&mut self.left_panel, &mut self.search_box, ctx);
-        link_parent_child(&mut self.left_panel, &mut self.font_list, ctx);
-        
-        // Scrolling list buttons
-        for btn in &mut self.font_buttons {
-            if btn.rect().0 > -9000.0 {
-                link_parent_child(&mut self.left_panel, btn, ctx);
+    /// Register the widgets (parentless — the panel Plates are dissolved). Static widgets
+    /// once; the font-list buttons every rebuild (they are recreated on search changes,
+    /// same cadence the old per-rebuild link_parent_child re-registration had).
+    fn register_widgets(&mut self) {
+        let self_ptr = self as *mut Self;
+        unsafe {
+            if !self.widgets_registered {
+                self.widgets_registered = true;
+                self.ui_context.register_widget(self.search_box.base().unwrap().id(), (*self_ptr).search_box.as_ptr_mut());
+                self.ui_context.register_widget(self.font_list.base().unwrap().id(), (*self_ptr).font_list.as_ptr_mut());
+                self.ui_context.register_widget(self.mid_scroll.base().unwrap().id(), (*self_ptr).mid_scroll.as_ptr_mut());
+                self.ui_context.register_widget(self.btn_open_folder.base().unwrap().id(), (*self_ptr).btn_open_folder.as_ptr_mut());
+                self.ui_context.register_widget(self.btn_remove_font.base().unwrap().id(), (*self_ptr).btn_remove_font.as_ptr_mut());
+                self.ui_context.register_widget(self.style_dropdown.base().unwrap().id(), (*self_ptr).style_dropdown.as_ptr_mut());
+                self.ui_context.register_widget(self.size_spinbox.base().unwrap().id(), (*self_ptr).size_spinbox.as_ptr_mut());
+                self.ui_context.register_widget(self.preview_box.base().unwrap().id(), (*self_ptr).preview_box.as_ptr_mut());
+                self.ui_context.register_widget(self.select_cancel_btn.base().unwrap().id(), (*self_ptr).select_cancel_btn.as_ptr_mut());
+                self.ui_context.register_widget(self.select_confirm_btn.base().unwrap().id(), (*self_ptr).select_confirm_btn.as_ptr_mut());
+            }
+            for btn in (*self_ptr).font_buttons.iter_mut() {
+                if btn.rect().0 > -9000.0 {
+                    self.ui_context.register_widget(btn.base().unwrap().id(), btn.as_ptr_mut());
+                }
             }
         }
+    }
 
-        // Middle Panel (Preview)
-        if self.selected_family.is_some() {
-            // Link mid_scroll to mid_panel
-            link_parent_child(&mut self.mid_panel, &mut self.mid_scroll, ctx);
-
-            // Link interactive elements to mid_panel (Plate) so it routes events to them
-            link_parent_child(&mut self.mid_panel, &mut self.btn_open_folder, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.btn_remove_font, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.style_dropdown, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.size_spinbox, ctx);
-            link_parent_child(&mut self.mid_panel, &mut self.preview_box, ctx);
-        }
-
-        // Bottom bar
+    fn content_h(&self) -> f32 {
+        let h = self.height as f32;
         if self.select_mode {
-            link_parent_child(&mut self.bottom_bar, &mut self.select_cancel_btn, ctx);
-            link_parent_child(&mut self.bottom_bar, &mut self.select_confirm_btn, ctx);
+            (h - 30.0 - 48.0).max(100.0)
+        } else {
+            (h - 20.0).max(100.0)
         }
+    }
+
+    /// The dissolved mid panel's rect (was `mid_panel.rect()`).
+    fn mid_panel_rect(&self) -> (f32, f32, f32, f32) {
+        let left_panel_w = 270.0;
+        let mid_x = 10.0 + left_panel_w + 12.0;
+        (mid_x, 10.0, self.width as f32 - 10.0 - mid_x, self.content_h())
+    }
+
+    /// The dissolved Plates' visual (blur off, non-draggable): config plate color else
+    /// page-low, at plate opacity, with the config border and corner radius.
+    fn plate_prims(&self, rect: cce_ui::scene::layout::Rect, pc: &mut cce_ui::scene::paint::PaintCtx) {
+        let mut fill = cce_ui::colors::plate_color().unwrap_or_else(cce_ui::colors::page_low_color);
+        fill[3] *= cce_ui::layout::plate_opacity();
+        let radius = cce_ui::layout::plate_corner_radius();
+        let radii = (radius, radius, radius, radius);
+        if let Some(bc) = cce_ui::colors::plate_border_color() {
+            pc.border(rect, radii, fill, bc, cce_ui::colors::plate_border_thickness());
+        } else if fill[3].abs() > 0.001 {
+            if radius > 0.1 {
+                pc.rounded_rect(rect, radius, (true, true, true, true), fill);
+            } else {
+                pc.quad(rect, fill);
+            }
+        }
+    }
+
+    /// Event dispatch order of the dissolved panels: the flat child list, panel-grouped
+    /// (left: search/list/buttons; mid, when a family is selected; bottom bar in select
+    /// mode) — the same sets the Plates forwarded to.
+    fn dispatch_widgets(&mut self, forward: bool) -> Vec<*mut (dyn Element + 'static)> {
+        let self_ptr = self as *mut Self;
+        let mut v: Vec<*mut (dyn Element + 'static)> = Vec::new();
+        unsafe {
+            v.push((*self_ptr).search_box.as_ptr_mut());
+            v.push((*self_ptr).font_list.as_ptr_mut());
+            for btn in (*self_ptr).font_buttons.iter_mut() {
+                if btn.rect().0 > -9000.0 {
+                    v.push(btn.as_ptr_mut());
+                }
+            }
+            if self.selected_family.is_some() {
+                v.push((*self_ptr).mid_scroll.as_ptr_mut());
+                v.push((*self_ptr).btn_open_folder.as_ptr_mut());
+                v.push((*self_ptr).btn_remove_font.as_ptr_mut());
+                v.push((*self_ptr).style_dropdown.as_ptr_mut());
+                v.push((*self_ptr).size_spinbox.as_ptr_mut());
+                v.push((*self_ptr).preview_box.as_ptr_mut());
+            }
+            if self.select_mode {
+                v.push((*self_ptr).select_cancel_btn.as_ptr_mut());
+                v.push((*self_ptr).select_confirm_btn.as_ptr_mut());
+            }
+        }
+        if !forward {
+            v.reverse();
+        }
+        v
     }
 
     fn reload_fonts(&mut self) {
@@ -290,7 +333,7 @@ impl TypefaceApp {
             }
         }
 
-        let (mid_panel_x, _, mid_panel_w, mid_panel_h) = self.mid_panel.rect();
+        let (mid_panel_x, _, mid_panel_w, mid_panel_h) = self.mid_panel_rect();
         let preview_box_x = mid_panel_x + 10.0;
         let preview_box_w = mid_panel_w - 20.0;
 
@@ -346,6 +389,11 @@ impl Application for TypefaceApp {
 
     fn display_list_text(&self) -> bool {
         true
+    }
+
+    fn is_movable_backplate_at(&self, px: f32, py: f32) -> bool {
+        // Root Backplate dissolved: the surface itself is the movable plate.
+        self.ui_context.drag_allowed_at(px, py)
     }
 
     fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
@@ -404,27 +452,8 @@ impl Application for TypefaceApp {
             scale_factor: 1.0,
             font_system: cce_ui::create_font_system_with_system_fonts(),
             needs_rebuild: true,
-            root_window: {
-                let win_color = cce_ui::colors::page_low_color();
-                let win_radius = cce_ui::colors::backplate_corner_radius();
-                Backplate::new(0.0, 0.0, if select_mode { 900.0 } else { 1200.0 }, if select_mode { 500.0 } else { 720.0 })
-                    .with_background(win_color)
-                    .with_border([0.22, 0.22, 0.28, 1.0], 1.5)
-                    .with_radius(win_radius)
-            },
-            left_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
-            mid_panel: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false),
             mid_scroll: ScrollBox::new(),
-            bottom_bar: Plate::new(0.0, 0.0, 0.0, 0.0).with_blur(false).with_draggable(false).with_engine_layout({
-                // Right-aligned row of buttons, 10px gap, vertically centered, 10px right inset.
-                // The buttons size to their text (Button::intrinsic_size) instead of a fixed 80px.
-                let mut s = cce_ui::scene::layout::Style::row()
-                    .gap(10.0)
-                    .main_align(cce_ui::scene::layout::MainAlign::End)
-                    .cross_align(cce_ui::scene::layout::CrossAlign::Center);
-                s.padding = cce_ui::scene::layout::Edges { left: 0.0, right: 10.0, top: 0.0, bottom: 0.0 };
-                s
-            }),
+            widgets_registered: false,
             ui_context: cce_ui::context::UiContext::new(),
         };
         
@@ -613,23 +642,14 @@ impl Application for TypefaceApp {
 
         if self.needs_rebuild || size_changed {
             cce_ui::scale::set_scale_factor(scale as f32);
-            self.root_window.set_rect(0.0, 0.0, w_f32, h_f32);
+            self.register_widgets();
 
-            // Position panel Plates
-            self.left_panel.set_rect(left_panel_x, 10.0, left_panel_w, content_h);
-            self.mid_panel.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
             self.mid_scroll.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
 
             let mid_content_h = if self.select_mode { 440.0 } else { 520.0 };
             self.mid_scroll.update_bounds(mid_content_h, 10.0, content_h);
 
             let bar_y = h_f32 - select_bar_h - 10.0;
-            self.bottom_bar.set_rect(left_panel_x, bar_y, w_f32 - 20.0, select_bar_h);
-
-            // Configure Plate visibility
-            self.left_panel.visible = true;
-            self.mid_panel.visible = true;
-            self.bottom_bar.visible = self.select_mode;
 
             // Search box
             self.search_box.set_rect(left_panel_x + 10.0, 10.0, left_panel_w - 20.0, 26.0);
@@ -695,25 +715,23 @@ impl Application for TypefaceApp {
             }
 
             if self.select_mode {
-                // Phase 2b: lay out the bottom bar's buttons via the scene layout engine. They
-                // size to their text and right-align in the bar, instead of fixed 80px slots.
-                let bar_ptr: *mut (dyn cce_ui::widget::Element + 'static) =
-                    &mut self.bottom_bar as *mut _;
-                cce_ui::scene::bridge::layout_subtree(
-                    &self.ui_context,
-                    bar_ptr,
-                    cce_ui::scene::layout::Rect {
-                        x: left_panel_x,
-                        y: bar_y,
-                        width: w_f32 - 20.0,
-                        height: select_bar_h,
-                    },
-                );
+                // The bottom bar's buttons, laid out directly (the layout Plate is
+                // DISSOLVED): text-sized via the bridge's Element::intrinsic_size, packed
+                // right with a 10px gap and inset, vertically centered — the old row style.
+                let cancel_sz = cce_ui::widget::Element::intrinsic_size(&self.select_cancel_btn)
+                    .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
+                let confirm_sz = cce_ui::widget::Element::intrinsic_size(&self.select_confirm_btn)
+                    .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
+                let bar_w = w_f32 - 20.0;
+                let mut x = left_panel_x + bar_w - 10.0 - confirm_sz.width;
+                self.select_confirm_btn.set_rect(x, bar_y + (select_bar_h - confirm_sz.height) / 2.0, confirm_sz.width, confirm_sz.height);
+                x -= 10.0 + cancel_sz.width;
+                self.select_cancel_btn.set_rect(x, bar_y + (select_bar_h - cancel_sz.height) / 2.0, cancel_sz.width, cancel_sz.height);
             }
 
-            self.rebuild_hierarchy();
             self.refresh_widget_text();
             self.needs_rebuild = false;
+            self.ui_context.rebuild_spatial_grid();
         }
 
         // Popover registration for the display-list text occlusion clamp. ui_context ONLY —
@@ -735,13 +753,56 @@ impl Application for TypefaceApp {
             (base_low[2] * 1.17).min(1.0),
             base_low[3],
         ];
-        self.root_window.background_color = Some(bg_color);
-
-        // 2. The widget tree walked into the list.
+        // 2. The dissolved root Backplate's plate (bg at backplate opacity, config border
+        // and radius), then the dissolved panels' plates and their children walked in the
+        // legacy panel order.
         use cce_ui::scene::layout::Rect;
         let mut pc = cce_ui::scene::paint::PaintCtx::new();
-        let root: *mut (dyn cce_ui::widget::Element + 'static) = self.root_window.as_ptr_mut();
-        cce_ui::scene::painter::paint_root_into(&self.ui_context, root, &mut pc);
+        {
+            let mut fill = bg_color;
+            if fill[3] > 0.001 {
+                fill[3] = cce_ui::color::active_backplate_opacity();
+            }
+            let radius = cce_ui::colors::backplate_corner_radius();
+            let radii = (radius, radius, radius, radius);
+            let rect = Rect { x: 0.0, y: 0.0, width: w_f32, height: h_f32 };
+            pc.border(rect, radii, fill, [0.22, 0.22, 0.28, 1.0], 1.5);
+        }
+        {
+            let self_ptr = self as *mut Self;
+            // Left panel plate + children.
+            self.plate_prims(Rect { x: left_panel_x, y: 10.0, width: left_panel_w, height: content_h }, &mut pc);
+            unsafe {
+                cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).search_box.as_ptr_mut(), &mut pc);
+                cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).font_list.as_ptr_mut(), &mut pc);
+                for btn in (*self_ptr).font_buttons.iter_mut() {
+                    if btn.rect().0 > -9000.0 {
+                        cce_ui::scene::painter::paint_root_into(&self.ui_context, btn.as_ptr_mut(), &mut pc);
+                    }
+                }
+            }
+            // Mid panel plate + children (when a family is selected, like the old links).
+            self.plate_prims(Rect { x: mid_panel_x, y: 10.0, width: mid_panel_w, height: content_h }, &mut pc);
+            if self.selected_family.is_some() {
+                unsafe {
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).mid_scroll.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).btn_open_folder.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).btn_remove_font.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).style_dropdown.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).size_spinbox.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).preview_box.as_ptr_mut(), &mut pc);
+                }
+            }
+            // Bottom bar plate + children (select mode).
+            if self.select_mode {
+                let bar_y = h_f32 - select_bar_h - 10.0;
+                self.plate_prims(Rect { x: left_panel_x, y: bar_y, width: w_f32 - 20.0, height: select_bar_h }, &mut pc);
+                unsafe {
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).select_cancel_btn.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).select_confirm_btn.as_ptr_mut(), &mut pc);
+                }
+            }
+        }
 
         let quad = |x: f32, y: f32, w: f32, h: f32, c: [f32; 4], pc: &mut cce_ui::scene::paint::PaintCtx| {
             pc.quad(Rect { x, y, width: w, height: h }, c);
@@ -764,7 +825,7 @@ impl Application for TypefaceApp {
 
         // 4. Alphabet preview box + its text prims (family + style/weight attrs).
         if self.selected_family.is_some() {
-            let mid_panel_h = self.mid_panel.base.base.h;
+            let mid_panel_h = self.content_h();
             let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
             let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
             let scroll_y = self.mid_scroll.scroll_y;
@@ -873,14 +934,17 @@ impl Application for TypefaceApp {
 
         let old_size = self.preview_box.font_size;
 
-        for &child_ptr in &self.root_window.children {
+        // The dissolved panels' cursor forwarding: dragging children get drag_update,
+        // everyone else cursor_moved (Plate::on_cursor_moved's inner loop, flattened).
+        for w_ptr in self.dispatch_widgets(true) {
             unsafe {
-                if let Some(child) = child_ptr.as_mut() {
-                    if child.visible() {
-                        if child.cursor_moved(px, py, &mut self.ui_context) {
-                            changed = true;
-                        }
+                let w = &mut *w_ptr;
+                if w.is_dragging() {
+                    if w.drag_update(px, py) {
+                        changed = true;
                     }
+                } else if w.cursor_moved(px, py, &mut self.ui_context) {
+                    changed = true;
                 }
             }
         }
@@ -918,15 +982,33 @@ impl Application for TypefaceApp {
             }
         }
 
-        // Route input to root_window children in reverse order
-        for &child_ptr in self.root_window.children.iter().rev() {
+        // The dissolved panels' press routing, flattened: popover-first (an open dropdown
+        // must see the click before anything beneath), then reverse order with the
+        // Plates' unfocus-on-missed-press rule, stopping at the first handler.
+        let widgets = self.dispatch_widgets(false);
+        let mut input_handled = false;
+        for &w_ptr in &widgets {
             unsafe {
-                if let Some(child) = child_ptr.as_mut() {
-                    if child.visible() {
-                        if child.mouse_input(button, state, px, py, &mut self.ui_context) {
-                            changed = true;
-                            break;
-                        }
+                let w = &mut *w_ptr;
+                if w.popover_rect().is_some() {
+                    if w.mouse_input(button, state, px, py, &mut self.ui_context) {
+                        changed = true;
+                        input_handled = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !input_handled {
+            for &w_ptr in &widgets {
+                unsafe {
+                    let w = &mut *w_ptr;
+                    if w.mouse_input(button, state, px, py, &mut self.ui_context) {
+                        changed = true;
+                        break;
+                    }
+                    if state == ElementState::Pressed && !w.hit_test(px, py, &self.ui_context) {
+                        w.unfocus();
                     }
                 }
             }
@@ -992,14 +1074,10 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
-        for &child_ptr in &self.root_window.children {
+        for w_ptr in self.dispatch_widgets(true) {
             unsafe {
-                if let Some(child) = child_ptr.as_mut() {
-                    if child.visible() {
-                        if child.mouse_wheel(delta, px, py, &mut self.ui_context) {
-                            changed = true;
-                        }
-                    }
+                if (*w_ptr).mouse_wheel(delta, px, py, &mut self.ui_context) {
+                    changed = true;
                 }
             }
         }
@@ -1104,15 +1182,11 @@ impl Application for TypefaceApp {
         if !handled {
             let old_search_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
             
-            for &child_ptr in &self.root_window.children {
+            for w_ptr in self.dispatch_widgets(true) {
                 unsafe {
-                    if let Some(child) = child_ptr.as_mut() {
-                        if child.visible() {
-                            if child.keyboard_input(event, &mut self.ui_context) {
-                                handled = true;
-                                break;
-                            }
-                        }
+                    if (*w_ptr).keyboard_input(event, &mut self.ui_context) {
+                        handled = true;
+                        break;
                     }
                 }
             }
