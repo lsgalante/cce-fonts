@@ -1,11 +1,11 @@
 mod pages;
 
 use wayland_client::QueueHandle;
-use glyphon::{FontSystem, Buffer, Metrics, Attrs};
+use glyphon::FontSystem;
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
-    MouseButton, ElementState, MouseScrollDelta, KeyEvent, TextItem, Element,
-    TextBox, Button, TextLabel, Key, NamedKey, List, ScrollBox, Dropdown, Spinbox,
+    MouseButton, ElementState, MouseScrollDelta, KeyEvent, Element,
+    TextBox, Button, Key, NamedKey, List, ScrollBox, Dropdown, Spinbox,
     Backplate, Plate
 };
 use cce_ui::widget::focus::link_parent_child;
@@ -71,7 +71,10 @@ struct TypefaceApp {
     width: u32,
     height: u32,
     scale_factor: f64,
-    text_items: Vec<TextItem>,
+    // Shapes glyph advances (prepare_text) — load-bearing for cursor↔pixel mapping and label
+    // measurement; all rendered text is display-list prims shaped by the engine. Must stay
+    // create_font_system_with_system_fonts() so measurement sees the same faces the engine
+    // renders (load_system_fonts).
     font_system: FontSystem,
     needs_rebuild: bool,
 
@@ -82,50 +85,6 @@ struct TypefaceApp {
     mid_scroll: ScrollBox,
     bottom_bar: Plate,
     ui_context: cce_ui::context::UiContext,
-}
-
-fn make_text_buffer_with_font(
-    fs: &mut FontSystem,
-    text: &str,
-    size: f32,
-    font: Option<&str>,
-    style: Option<glyphon::Style>,
-    weight: Option<glyphon::Weight>,
-) -> Buffer {
-    let scale = cce_ui::scale::scale_factor();
-    let mut font_size = size;
-    let mut family_name = None;
-
-    if let Some(font_str) = font {
-        let (parsed_family, parsed_size) = cce_ui::layout::parse_font_string(font_str);
-        if let Some(ps) = parsed_size {
-            font_size = ps;
-        }
-        family_name = Some(parsed_family);
-    }
-
-    let physical_size = font_size * scale;
-    let metrics = Metrics::new(physical_size, physical_size * 1.4);
-    let mut buf = Buffer::new(fs, metrics);
-    let mut attrs = Attrs::new();
-    if let Some(ref font_family) = family_name {
-        let family = match font_family.as_str() {
-            "monospace" => glyphon::Family::Name(cce_ui::layout::get_system_monospace_font()),
-            "sans-serif" => glyphon::Family::SansSerif,
-            "serif" => glyphon::Family::Serif,
-            name => glyphon::Family::Name(name),
-        };
-        attrs = attrs.family(family);
-    }
-    if let Some(s) = style {
-        attrs = attrs.style(s);
-    }
-    if let Some(w) = weight {
-        attrs = attrs.weight(w);
-    }
-    buf.set_text(fs, text, attrs, glyphon::Shaping::Advanced);
-    buf.shape_until_scroll(fs, true);
-    buf
 }
 
 impl TypefaceApp {
@@ -289,11 +248,11 @@ impl TypefaceApp {
         }
     }
 
-    fn rebuild_text_items(&mut self) {
-        self.text_items.clear();
+    /// Glyph-advance shaping for the interactive widgets — load-bearing for cursor↔pixel
+    /// mapping and label measurement; all rendered text is display-list prims shaped by the
+    /// engine (which also carries the system fonts via `load_system_fonts`).
+    fn refresh_widget_text(&mut self) {
         let font_system = &mut self.font_system;
-
-        // Ensure all widgets have their text prepared/shaped
         self.search_box.prepare_text(font_system);
         self.font_list.prepare_text(font_system);
         for btn in &mut self.font_buttons {
@@ -306,160 +265,69 @@ impl TypefaceApp {
         self.btn_remove_font.prepare_text(font_system);
         self.select_cancel_btn.prepare_text(font_system);
         self.select_confirm_btn.prepare_text(font_system);
+    }
 
-        let mut labels = Vec::new();
+    /// The alphabet preview as display-list text: one prim per line (the legacy single
+    /// multi-line buffer becomes per-line prims at the same 1.4 line spacing), in the selected
+    /// family with the style variant's italic/weight attrs (`TextAttrs` — the Phase 6 prim
+    /// extension this app motivated), clipped to the preview box.
+    fn push_alphabet_preview(&self, pc: &mut cce_ui::scene::paint::PaintCtx) {
+        let Some(ref family) = self.selected_family else { return };
 
-        // Page Content
-        labels.extend(self.left_panel.text_labels_with_bounds(&self.ui_context));
+        let font_size = self.size_spinbox.value as f32;
+        let mut attrs = cce_ui::scene::paint::TextAttrs::default();
+        if let Some(ref style) = self.selected_style {
+            let sl = style.to_lowercase();
+            if sl.contains("italic") || sl.contains("oblique") {
+                attrs.italic = true;
+            }
+            if sl.contains("bold") {
+                attrs.weight = Some(700);
+            } else if sl.contains("light") {
+                attrs.weight = Some(300);
+            } else if sl.contains("medium") {
+                attrs.weight = Some(500);
+            }
+        }
 
-        // Clamped middle panel labels
         let (mid_panel_x, _, mid_panel_w, mid_panel_h) = self.mid_panel.rect();
-        let mid_viewport = [mid_panel_x, 10.0, mid_panel_x + mid_panel_w, 10.0 + mid_panel_h];
-        let mid_labels = self.mid_panel.text_labels_with_bounds(&self.ui_context);
-        for (label, bounds) in mid_labels {
-            let clamped_bounds = match bounds {
-                Some(b) => {
-                    let x0 = b[0].max(mid_viewport[0]);
-                    let y0 = b[1].max(mid_viewport[1]);
-                    let x1 = b[2].min(mid_viewport[2]);
-                    let y1 = b[3].min(mid_viewport[3]);
-                    if x0 < x1 && y0 < y1 {
-                        Some([x0, y0, x1, y1])
-                    } else {
-                        continue; // Completely clipped
-                    }
-                }
-                None => Some(mid_viewport),
-            };
-            labels.push((label, clamped_bounds));
+        let preview_box_x = mid_panel_x + 10.0;
+        let preview_box_w = mid_panel_w - 20.0;
+
+        let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
+        let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+        let scroll_y = self.mid_scroll.scroll_y;
+        let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
+
+        let viewport_top = 10.0;
+        let viewport_bottom = 10.0 + mid_panel_h;
+        if alphabet_draw_y + alphabet_box_h < viewport_top || alphabet_draw_y > viewport_bottom {
+            return;
         }
+        let bounds_y_start = alphabet_draw_y.max(viewport_top);
+        let bounds_y_end = (alphabet_draw_y + alphabet_box_h).min(viewport_bottom);
+        let bounds = Some([preview_box_x, bounds_y_start, preview_box_x + preview_box_w, bounds_y_end]);
 
-        if self.select_mode {
-            labels.extend(self.bottom_bar.text_labels_with_bounds(&self.ui_context));
-        }
-
-        // Render Dropdown popover labels if open
-        if self.style_dropdown.open && self.selected_family.is_some() {
-            let mut pc = cce_ui::layout::PopoverCollector::new();
-            self.style_dropdown.render_popover(&mut pc);
-            for (content, size, tx, ty, color, _font, _bounds) in pc.texts {
-                let color_u8 = [
-                    (color[0] * 255.0).clamp(0.0, 255.0) as u8,
-                    (color[1] * 255.0).clamp(0.0, 255.0) as u8,
-                    (color[2] * 255.0).clamp(0.0, 255.0) as u8,
-                ];
-                let pop_x = tx;
-                let pop_y = ty;
-                let popover_bounds = Some(mid_viewport);
-                labels.push((TextLabel {
-                    text: content,
-                    x: pop_x,
-                    y: pop_y,
-                    font_size: size,
-                    color: color_u8,
-                }, popover_bounds));
-            }
-        }
-
-        // Alphabet preview
-        if let Some(ref family) = self.selected_family {
-            let font_size = self.size_spinbox.value as f32;
-            let mut style_val = None;
-            let mut weight_val = None;
-            if let Some(ref style) = self.selected_style {
-                let sl = style.to_lowercase();
-                if sl.contains("italic") || sl.contains("oblique") {
-                    style_val = Some(glyphon::Style::Italic);
-                }
-                if sl.contains("bold") {
-                    weight_val = Some(glyphon::Weight::BOLD);
-                } else if sl.contains("light") {
-                    weight_val = Some(glyphon::Weight::LIGHT);
-                } else if sl.contains("medium") {
-                    weight_val = Some(glyphon::Weight::MEDIUM);
-                }
-            }
-
-            let alphabet_text = "ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789\n!@#$%^&*()_+-=[]{}|;':\",./<>";
-            let alph_buf = make_text_buffer_with_font(
-                font_system,
-                alphabet_text,
-                (font_size * 0.55).clamp(8.0, 36.0),
-                Some(family),
-                style_val,
-                weight_val,
-            );
-            
-            let preview_box_x = mid_panel_x + 10.0;
-            let preview_box_w = mid_panel_w - 20.0;
-            
-            let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
-            let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
-            let scroll_y = self.mid_scroll.scroll_y;
-            let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
-
-            let viewport_top = 10.0;
-            let viewport_bottom = 10.0 + mid_panel_h;
-            if alphabet_draw_y + alphabet_box_h >= viewport_top && alphabet_draw_y <= viewport_bottom {
-                let bounds_y_start = alphabet_draw_y.max(viewport_top);
-                let bounds_y_end = (alphabet_draw_y + alphabet_box_h).min(viewport_bottom);
-                self.text_items.push(TextItem {
-                    buffer: preview_text_buffer_clamped(alph_buf, font_system, mid_panel_w - 40.0),
-                    x: mid_panel_x + 20.0,
-                    y: alphabet_draw_y + 12.0,
-                    color: glyphon::Color::rgb(0x88, 0x88, 0x99),
-                    bounds: Some([preview_box_x, bounds_y_start, preview_box_x + preview_box_w, bounds_y_end]),
-                });
-            }
-        }
-
-        if self.select_mode {
-            let left_panel_x = self.left_panel.base.base.x;
-            let bar_y = self.height as f32 - 48.0 - 10.0;
-            labels.push((TextLabel {
-                text: "Selected Font:".to_string(),
-                x: left_panel_x + 10.0,
-                y: bar_y + 18.0,
-                font_size: 12.0,
-                color: [0x5c, 0x90, 0x60],
-            }, None));
-
-            let font_name = self.selected_family.clone().unwrap_or_else(|| "None".to_string());
-            labels.push((TextLabel {
-                text: font_name,
-                x: left_panel_x + 110.0,
-                y: bar_y + 18.0,
-                font_size: 12.0,
-                color: [0xdd, 0xdd, 0xe2],
-            }, None));
-        }
-
-        // Convert TextLabels to text_items via cce-ui's shared buffer factory, which resolves the
-        // font family to an actually-loaded font. (Building buffers with a bare `Attrs::new()`
-        // doesn't resolve a family — cosmic-text then shaped empty runs and nothing rendered.)
-        for (label, bounds) in labels {
-            let buf = cce_ui::backend::window_runner::get_text_buffer(
-                font_system,
-                &label.text,
-                label.font_size,
-                Some("monospace"),
-            );
-            self.text_items.push(TextItem {
-                buffer: buf,
-                x: label.x,
-                y: label.y,
-                color: glyphon::Color::rgb(label.color[0], label.color[1], label.color[2]),
+        let size_used = (font_size * 0.55).clamp(8.0, 36.0);
+        let lines = [
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "abcdefghijklmnopqrstuvwxyz",
+            "0123456789",
+            "!@#$%^&*()_+-=[]{}|;':\",./<>",
+        ];
+        for (i, line) in lines.iter().enumerate() {
+            pc.text_attrs(
+                *line,
+                mid_panel_x + 20.0,
+                alphabet_draw_y + 12.0 + i as f32 * size_used * 1.4,
+                size_used,
+                [0x88, 0x88, 0x99],
+                Some(family.clone()),
                 bounds,
-            });
+                attrs,
+            );
         }
     }
-}
-
-// Helpers to prevent preview text overflowing the panel width by wrapping or cropping
-fn preview_text_buffer_clamped(mut buf: Buffer, font_system: &mut FontSystem, max_width: f32) -> Buffer {
-    buf.set_size(font_system, Some(max_width), None);
-    buf.shape_until_scroll(font_system, true);
-    buf
 }
 
 impl Application for TypefaceApp {
@@ -469,23 +337,14 @@ impl Application for TypefaceApp {
         Some(&self.ui_context)
     }
 
-    fn view_rounded_quads(&mut self, quads: &mut Vec<(f32, f32, f32, f32, f32, [f32; 4], (bool, bool, bool, bool))>, _size: LogicalSize, _scale: f64) {
-        quads.extend(self.root_window.all_rounded_quads(&self.ui_context));
-    }
-
-    fn display_list(&mut self, _size: cce_ui::engine::LogicalSize, _scale: f64) -> Option<cce_ui::scene::paint::DisplayList> {
-        // Phase 3: render via the single paint path by default. Set CCE_LEGACY_PAINT to fall back.
-        if std::env::var("CCE_LEGACY_PAINT").is_ok() {
-            return None;
-        }
-        let root: *mut (dyn cce_ui::widget::Element + 'static) = self.root_window.as_ptr_mut();
-        Some(cce_ui::scene::painter::paint_tree(&self.ui_context, root))
-    }
-
     /// The font picker previews arbitrary installed families: the engine's render FontSystem
-    /// must contain the system fonts, or preview buffers shaped against this app's
-    /// system-fonts FontSystem carry face IDs the engine can't rasterize (invisible text).
+    /// must contain the system fonts, or preview text asking for a system-only family is
+    /// silently invisible.
     fn load_system_fonts(&self) -> bool {
+        true
+    }
+
+    fn display_list_text(&self) -> bool {
         true
     }
 
@@ -543,7 +402,6 @@ impl Application for TypefaceApp {
             width: if select_mode { 900 } else { 1200 },
             height: if select_mode { 500 } else { 720 },
             scale_factor: 1.0,
-            text_items: Vec::new(),
             font_system: cce_ui::create_font_system_with_system_fonts(),
             needs_rebuild: true,
             root_window: {
@@ -726,7 +584,11 @@ impl Application for TypefaceApp {
         }
     }
 
-        fn view(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, size: LogicalSize, scale: f64) {
+    fn display_list(&mut self, size: LogicalSize, scale: f64) -> Option<cce_ui::scene::paint::DisplayList> {
+        // Phase 6 single paint path: setup/relayout (the old view() body), then the whole
+        // frame — the widget tree walked into one list, the panel borders and alphabet box
+        // (lost since the Phase 3 adoption discarded view()'s quads), the alphabet preview
+        // prims, and the style-dropdown popover on top — is built here.
         let size_changed = self.width != size.width as u32 || self.height != size.height as u32 || self.scale_factor != scale;
         if self.needs_rebuild || size_changed {
             self.width = size.width as u32;
@@ -850,8 +712,17 @@ impl Application for TypefaceApp {
             }
 
             self.rebuild_hierarchy();
-            self.rebuild_text_items();
+            self.refresh_widget_text();
             self.needs_rebuild = false;
+        }
+
+        // Popover registration for the display-list text occlusion clamp. ui_context ONLY —
+        // deliberately not the global popovers registry: this app draws its popover in the
+        // display list below (not on an engine xdg popup), and a global registration would
+        // spawn an empty popup surface (no render_popovers override here).
+        self.ui_context.clear_popovers();
+        if self.selected_family.is_some() && self.style_dropdown.popover_rect().is_some() {
+            self.ui_context.register_popover(&self.style_dropdown);
         }
 
         let base_low = cce_ui::colors::page_low_color();
@@ -866,30 +737,32 @@ impl Application for TypefaceApp {
         ];
         self.root_window.background_color = Some(bg_color);
 
-        // Draw active containers and all child widgets (including panel plates)
-        let (rx, ry, rw, rh) = self.root_window.rect();
-        for (qx, qy, qw, qh, qc) in self.root_window.all_quads(&self.ui_context) {
-            if (qx - rx).abs() < 0.1 && (qy - ry).abs() < 0.1 && (qw - rw).abs() < 0.1 && (qh - rh).abs() < 0.1 {
-                continue;
-            }
-            quads.push((qx, qy, qw, qh, qc));
-        }
+        // 2. The widget tree walked into the list.
+        use cce_ui::scene::layout::Rect;
+        let mut pc = cce_ui::scene::paint::PaintCtx::new();
+        let root: *mut (dyn cce_ui::widget::Element + 'static) = self.root_window.as_ptr_mut();
+        cce_ui::scene::painter::paint_root_into(&self.ui_context, root, &mut pc);
 
-        // 5. Page Content Outline Borders
+        let quad = |x: f32, y: f32, w: f32, h: f32, c: [f32; 4], pc: &mut cce_ui::scene::paint::PaintCtx| {
+            pc.quad(Rect { x, y, width: w, height: h }, c);
+        };
+
+        // 3. Page Content Outline Borders
         // Left Panel Borders
-        quads.push((left_panel_x, 10.0, left_panel_w, 1.0, border_col));
-        quads.push((left_panel_x, 10.0 + content_h, left_panel_w, 1.0, border_col));
-        quads.push((left_panel_x, 10.0, 1.0, content_h, border_col));
-        quads.push((left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col));
+        quad(left_panel_x, 10.0, left_panel_w, 1.0, border_col, &mut pc);
+        quad(left_panel_x, 10.0 + content_h, left_panel_w, 1.0, border_col, &mut pc);
+        quad(left_panel_x, 10.0, 1.0, content_h, border_col, &mut pc);
+        quad(left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col, &mut pc);
 
         // Middle Panel Borders
-        quads.push((mid_panel_x, 10.0, mid_panel_w, 1.0, border_col));
-        quads.push((mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col));
-        quads.push((mid_panel_x, 10.0, 1.0, content_h, border_col));
-        quads.push((mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col));
+        quad(mid_panel_x, 10.0, mid_panel_w, 1.0, border_col, &mut pc);
+        quad(mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col, &mut pc);
+        quad(mid_panel_x, 10.0, 1.0, content_h, border_col, &mut pc);
+        quad(mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col, &mut pc);
 
         // The ScrollBox now automatically draws its own borders and scrollbar.
 
+        // 4. Alphabet preview box + its text prims (family + style/weight attrs).
         if self.selected_family.is_some() {
             let mid_panel_h = self.mid_panel.base.base.h;
             let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
@@ -921,41 +794,76 @@ impl Application for TypefaceApp {
                         1.0,
                     ];
 
-                    quads.push((preview_box_x, draw_y_start, preview_box_w, draw_h, alphabet_bg)); // alphabet box bg
-                    
+                    quad(preview_box_x, draw_y_start, preview_box_w, draw_h, alphabet_bg, &mut pc); // alphabet box bg
+
                     if alphabet_draw_y >= viewport_top {
-                        quads.push((preview_box_x, alphabet_draw_y, preview_box_w, 1.0, alphabet_border)); // Top border
+                        quad(preview_box_x, alphabet_draw_y, preview_box_w, 1.0, alphabet_border, &mut pc); // Top border
                     }
                     if alphabet_draw_y + alphabet_box_h <= viewport_bottom {
-                        quads.push((preview_box_x, alphabet_draw_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border)); // Bottom border
+                        quad(preview_box_x, alphabet_draw_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border, &mut pc); // Bottom border
                     }
-                    quads.push((preview_box_x, draw_y_start, 1.0, draw_h, alphabet_border)); // Left border
-                    quads.push((preview_box_x + preview_box_w, draw_y_start, 1.0, draw_h, alphabet_border)); // Right border
+                    quad(preview_box_x, draw_y_start, 1.0, draw_h, alphabet_border, &mut pc); // Left border
+                    quad(preview_box_x + preview_box_w, draw_y_start, 1.0, draw_h, alphabet_border, &mut pc); // Right border
                 }
             }
+
+            self.push_alphabet_preview(&mut pc);
         }
 
         if self.select_mode {
             let bar_y = h_f32 - select_bar_h - 10.0;
             // Draw bottom bar separator, side borders, and bottom border
-            quads.push((left_panel_x, bar_y, w_f32 - 20.0, 1.0, border_col));
-            quads.push((left_panel_x, bar_y, 1.0, select_bar_h, border_col));
-            quads.push((w_f32 - 10.0, bar_y, 1.0, select_bar_h, border_col));
-            quads.push((left_panel_x, bar_y + select_bar_h, w_f32 - 20.0, 1.0, border_col));
-        }
-    }
+            quad(left_panel_x, bar_y, w_f32 - 20.0, 1.0, border_col, &mut pc);
+            quad(left_panel_x, bar_y, 1.0, select_bar_h, border_col, &mut pc);
+            quad(w_f32 - 10.0, bar_y, 1.0, select_bar_h, border_col, &mut pc);
+            quad(left_panel_x, bar_y + select_bar_h, w_f32 - 20.0, 1.0, border_col, &mut pc);
 
-    fn overlay_quads(&mut self, quads: &mut Vec<(f32, f32, f32, f32, [f32; 4])>, _size: LogicalSize, _scale: f64) {
-        if self.selected_family.is_some() {
-            // Style Dropdown popover rendered on top of everything
-            let mut pc = cce_ui::layout::PopoverCollector::new();
-            self.style_dropdown.render_popover(&mut pc);
-            quads.extend(pc.rects.iter().map(|&(c, x, y, w, h)| (x, y, w, h, c)));
+            // Selected-font readout in the bottom bar
+            pc.text_with(
+                "Selected Font:",
+                left_panel_x + 10.0,
+                bar_y + 18.0,
+                12.0,
+                [0x5c, 0x90, 0x60],
+                Some("monospace".to_string()),
+                None,
+            );
+            let font_name = self.selected_family.clone().unwrap_or_else(|| "None".to_string());
+            pc.text_with(
+                font_name,
+                left_panel_x + 110.0,
+                bar_y + 18.0,
+                12.0,
+                [0xdd, 0xdd, 0xe2],
+                Some("monospace".to_string()),
+                None,
+            );
         }
-    }
 
-    fn text_items(&self) -> &[TextItem] {
-        &self.text_items
+        // 5. Style-dropdown popover — geometry and labels last, on top of everything. Its
+        // labels carry bounds equal to the popover rect, which both clips them to the plate
+        // and exempts them from the occlusion clamp (the is-overlay-text convention).
+        if self.selected_family.is_some() && self.style_dropdown.open {
+            let mut coll = cce_ui::layout::PopoverCollector::new();
+            self.style_dropdown.render_popover(&mut coll);
+            for &(c, x, y, w, h) in &coll.rects {
+                quad(x, y, w, h, c, &mut pc);
+            }
+            let pop_bounds = self
+                .style_dropdown
+                .popover_rect()
+                .map(|(x, y, w, h)| [x, y, x + w, y + h]);
+            for (content, size, tx, ty, color, _font, _bounds) in coll.texts {
+                let color_u8 = [
+                    (color[0] * 255.0).clamp(0.0, 255.0) as u8,
+                    (color[1] * 255.0).clamp(0.0, 255.0) as u8,
+                    (color[2] * 255.0).clamp(0.0, 255.0) as u8,
+                ];
+                pc.text_with(content, tx, ty, size, color_u8, Some("monospace".to_string()), pop_bounds);
+            }
+        }
+
+        Some(pc.finish())
     }
 
     fn handle_pointer_move(&mut self, pos: LogicalPosition, needs_rebuild: &mut bool) {
