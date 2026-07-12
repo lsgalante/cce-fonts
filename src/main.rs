@@ -911,7 +911,7 @@ impl Application for TypefaceApp {
         // spawn an empty popup surface (no render_popovers override here).
         self.ui_context.clear_popovers();
         if self.selected_family.is_some() && self.style_dropdown.popover_rect().is_some() {
-            self.ui_context.register_popover(&self.style_dropdown);
+            self.ui_context.register_popover(&mut self.style_dropdown);
         }
 
         let base_low = cce_ui::colors::page_low_color();
