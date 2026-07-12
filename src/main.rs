@@ -887,11 +887,11 @@ impl Application for TypefaceApp {
 
             if self.select_mode {
                 // The bottom bar's buttons, laid out directly (the layout Plate is
-                // DISSOLVED): text-sized via the bridge's Element::intrinsic_size, packed
+                // DISSOLVED): text-sized via the widgets' intrinsic size, packed
                 // right with a 10px gap and inset, vertically centered — the old row style.
-                let cancel_sz = cce_ui::widget::Element::intrinsic_size(&self.select_cancel_btn)
+                let cancel_sz = self.select_cancel_btn.intrinsic_size()
                     .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
-                let confirm_sz = cce_ui::widget::Element::intrinsic_size(&self.select_confirm_btn)
+                let confirm_sz = self.select_confirm_btn.intrinsic_size()
                     .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
                 let bar_w = w_f32 - 20.0;
                 let mut x = left_panel_x + bar_w - 10.0 - confirm_sz.width;
