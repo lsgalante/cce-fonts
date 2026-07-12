@@ -4,7 +4,7 @@ use wayland_client::QueueHandle;
 use glyphon::FontSystem;
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
-    MouseButton, ElementState, MouseScrollDelta, KeyEvent, Element,
+    MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost,
     TextBox, Button, Key, NamedKey, Dropdown, Spinbox,
 };
 
@@ -317,9 +317,9 @@ impl TypefaceApp {
     /// Event dispatch order of the dissolved panels: the flat child list, panel-grouped
     /// (left: search/list/buttons; mid, when a family is selected; bottom bar in select
     /// mode) — the same sets the Plates forwarded to.
-    fn dispatch_widgets(&mut self, forward: bool) -> Vec<*mut (dyn Element + 'static)> {
+    fn dispatch_widgets(&mut self, forward: bool) -> Vec<*mut (dyn WidgetHost + 'static)> {
         let self_ptr = self as *mut Self;
-        let mut v: Vec<*mut (dyn Element + 'static)> = Vec::new();
+        let mut v: Vec<*mut (dyn WidgetHost + 'static)> = Vec::new();
         unsafe {
             v.push((*self_ptr).search_box.as_ptr_mut());
             for btn in (*self_ptr).font_buttons.iter_mut() {
