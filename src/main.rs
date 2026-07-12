@@ -4,7 +4,7 @@ use wayland_client::QueueHandle;
 use glyphon::FontSystem;
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
-    MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost,
+    MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost, Event,
     TextBox, Button, Key, NamedKey, Dropdown, Spinbox,
 };
 
@@ -1115,18 +1115,13 @@ impl Application for TypefaceApp {
         self.list_region.hovered = self.list_region.hit(px, py);
         self.mid_region.hovered = self.mid_region.hit(px, py);
 
-        // The dissolved panels' cursor forwarding: dragging children get drag_update,
-        // everyone else cursor_moved (Plate::on_cursor_moved's inner loop, flattened).
+        // Routed dispatch (6bd shrink): one PointerMove through the router per roster
+        // root — hover bookkeeping plus the router's drag forwarding (replaces the
+        // is_dragging -> drag_update pass; DragUpdate reaches the drag target off-rect).
+        let ev = Event::PointerMove { x: px, y: py, local_x: px, local_y: py };
         for w_ptr in self.dispatch_widgets(true) {
-            unsafe {
-                let w = &mut *w_ptr;
-                if w.is_dragging() {
-                    if w.drag_update(px, py) {
-                        changed = true;
-                    }
-                } else if w.cursor_moved(px, py, &mut self.ui_context) {
-                    changed = true;
-                }
+            if self.ui_context.propagate_event(&ev, w_ptr) {
+                changed = true;
             }
         }
 
@@ -1180,36 +1175,34 @@ impl Application for TypefaceApp {
             }
         }
 
-        // The dissolved panels' press routing, flattened: popover-first (an open dropdown
-        // must see the click before anything beneath), then reverse order with the
-        // Plates' unfocus-on-missed-press rule, stopping at the first handler.
+        // The dissolved panels' press routing, flattened and ROUTED (6bd shrink):
+        // popover-first (an open dropdown must see the click before anything beneath),
+        // then reverse order with the Plates' unfocus-on-missed-press rule, stopping at
+        // the first handler. The router hit-gates presses and records the drag target.
+        let ev = Event::MouseButton { button, state, x: px, y: py, local_x: px, local_y: py };
         let widgets = self.dispatch_widgets(false);
         let mut input_handled = region_handled;
         for &w_ptr in &widgets {
             if input_handled {
                 break;
             }
-            unsafe {
-                let w = &mut *w_ptr;
-                if w.popover_rect().is_some() {
-                    if w.mouse_input(button, state, px, py, &mut self.ui_context) {
-                        changed = true;
-                        input_handled = true;
-                        break;
-                    }
+            if unsafe { (*w_ptr).popover_rect() }.is_some() {
+                if self.ui_context.propagate_event(&ev, w_ptr) {
+                    changed = true;
+                    input_handled = true;
+                    break;
                 }
             }
         }
         if !input_handled {
             for &w_ptr in &widgets {
+                if self.ui_context.propagate_event(&ev, w_ptr) {
+                    changed = true;
+                    break;
+                }
                 unsafe {
-                    let w = &mut *w_ptr;
-                    if w.mouse_input(button, state, px, py, &mut self.ui_context) {
-                        changed = true;
-                        break;
-                    }
-                    if state == ElementState::Pressed && !w.hit_test(px, py, &self.ui_context) {
-                        w.unfocus();
+                    if state == ElementState::Pressed && !(*w_ptr).hit_test(px, py, &self.ui_context) {
+                        (*w_ptr).unfocus();
                     }
                 }
             }
@@ -1281,11 +1274,12 @@ impl Application for TypefaceApp {
         if self.selected_family.is_some() && self.mid_region.wheel(delta, px, py) {
             changed = true;
         }
+        // Routed (6bd shrink): every roster root sees the wheel, as the legacy
+        // no-break loop did; each widget hit-gates internally.
+        let ev = Event::MouseWheel { delta: *delta, x: px, y: py, local_x: px, local_y: py };
         for w_ptr in self.dispatch_widgets(true) {
-            unsafe {
-                if (*w_ptr).mouse_wheel(delta, px, py, &mut self.ui_context) {
-                    changed = true;
-                }
+            if self.ui_context.propagate_event(&ev, w_ptr) {
+                changed = true;
             }
         }
 
@@ -1389,12 +1383,13 @@ impl Application for TypefaceApp {
         if !handled {
             let old_search_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
             
+            // Routed (6bd shrink); short-circuits on the first handler — the router
+            // delivers KeyInput to the focused widget first on EVERY call (the 6ac trap).
+            let ev = Event::KeyInput(event.clone());
             for w_ptr in self.dispatch_widgets(true) {
-                unsafe {
-                    if (*w_ptr).keyboard_input(event, &mut self.ui_context) {
-                        handled = true;
-                        break;
-                    }
+                if self.ui_context.propagate_event(&ev, w_ptr) {
+                    handled = true;
+                    break;
                 }
             }
             if !handled && self.list_region.keyboard(event) {
