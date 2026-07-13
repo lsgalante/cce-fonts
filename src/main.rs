@@ -317,27 +317,24 @@ impl TypefaceApp {
     /// Event dispatch order of the dissolved panels: the flat child list, panel-grouped
     /// (left: search/list/buttons; mid, when a family is selected; bottom bar in select
     /// mode) — the same sets the Plates forwarded to.
-    fn dispatch_widgets(&mut self, forward: bool) -> Vec<*mut (dyn WidgetHost + 'static)> {
-        let self_ptr = self as *mut Self;
-        let mut v: Vec<*mut (dyn WidgetHost + 'static)> = Vec::new();
-        unsafe {
-            v.push((*self_ptr).search_box.as_ptr_mut());
-            for btn in (*self_ptr).font_buttons.iter_mut() {
-                if btn.rect().0 > -9000.0 {
-                    v.push(btn.as_ptr_mut());
-                }
+    fn dispatch_widgets(&mut self, forward: bool) -> Vec<cce_ui::widget::WidgetId> {
+        let mut v: Vec<cce_ui::widget::WidgetId> = Vec::new();
+        v.push(self.search_box.id());
+        for btn in self.font_buttons.iter() {
+            if btn.rect().0 > -9000.0 {
+                v.push(btn.id());
             }
-            if self.selected_family.is_some() {
-                v.push((*self_ptr).btn_open_folder.as_ptr_mut());
-                v.push((*self_ptr).btn_remove_font.as_ptr_mut());
-                v.push((*self_ptr).style_dropdown.as_ptr_mut());
-                v.push((*self_ptr).size_spinbox.as_ptr_mut());
-                v.push((*self_ptr).preview_box.as_ptr_mut());
-            }
-            if self.select_mode {
-                v.push((*self_ptr).select_cancel_btn.as_ptr_mut());
-                v.push((*self_ptr).select_confirm_btn.as_ptr_mut());
-            }
+        }
+        if self.selected_family.is_some() {
+            v.push(self.btn_open_folder.id());
+            v.push(self.btn_remove_font.id());
+            v.push(self.style_dropdown.id());
+            v.push(self.size_spinbox.id());
+            v.push(self.preview_box.id());
+        }
+        if self.select_mode {
+            v.push(self.select_cancel_btn.id());
+            v.push(self.select_confirm_btn.id());
         }
         if !forward {
             v.reverse();
@@ -1119,8 +1116,8 @@ impl Application for TypefaceApp {
         // root — hover bookkeeping plus the router's drag forwarding (replaces the
         // is_dragging -> drag_update pass; DragUpdate reaches the drag target off-rect).
         let ev = Event::PointerMove { x: px, y: py, local_x: px, local_y: py };
-        for w_ptr in self.dispatch_widgets(true) {
-            if self.ui_context.propagate_event(&ev, w_ptr) {
+        for root in self.dispatch_widgets(true) {
+            if self.ui_context.propagate_event(&ev, root) {
                 changed = true;
             }
         }
@@ -1182,12 +1179,13 @@ impl Application for TypefaceApp {
         let ev = Event::MouseButton { button, state, x: px, y: py, local_x: px, local_y: py };
         let widgets = self.dispatch_widgets(false);
         let mut input_handled = region_handled;
-        for &w_ptr in &widgets {
+        for &root in &widgets {
             if input_handled {
                 break;
             }
-            if unsafe { (*w_ptr).popover_rect() }.is_some() {
-                if self.ui_context.propagate_event(&ev, w_ptr) {
+            let has_popover = self.ui_context.get_widget(root).map_or(false, |w| w.popover_rect().is_some());
+            if has_popover {
+                if self.ui_context.propagate_event(&ev, root) {
                     changed = true;
                     input_handled = true;
                     break;
@@ -1195,14 +1193,17 @@ impl Application for TypefaceApp {
             }
         }
         if !input_handled {
-            for &w_ptr in &widgets {
-                if self.ui_context.propagate_event(&ev, w_ptr) {
+            for &root in &widgets {
+                if self.ui_context.propagate_event(&ev, root) {
                     changed = true;
                     break;
                 }
-                unsafe {
-                    if state == ElementState::Pressed && !(*w_ptr).hit_test(px, py, &self.ui_context) {
-                        (*w_ptr).unfocus();
+                if state == ElementState::Pressed {
+                    let missed = self.ui_context.get_widget(root).map_or(false, |w| !w.hit_test(px, py, &self.ui_context));
+                    if missed {
+                        if let Some(w) = self.ui_context.get_widget_mut(root) {
+                            w.unfocus();
+                        }
                     }
                 }
             }
@@ -1277,8 +1278,8 @@ impl Application for TypefaceApp {
         // Routed (6bd shrink): every roster root sees the wheel, as the legacy
         // no-break loop did; each widget hit-gates internally.
         let ev = Event::MouseWheel { delta: *delta, x: px, y: py, local_x: px, local_y: py };
-        for w_ptr in self.dispatch_widgets(true) {
-            if self.ui_context.propagate_event(&ev, w_ptr) {
+        for root in self.dispatch_widgets(true) {
+            if self.ui_context.propagate_event(&ev, root) {
                 changed = true;
             }
         }
@@ -1386,8 +1387,8 @@ impl Application for TypefaceApp {
             // Routed (6bd shrink); short-circuits on the first handler — the router
             // delivers KeyInput to the focused widget first on EVERY call (the 6ac trap).
             let ev = Event::KeyInput(event.clone());
-            for w_ptr in self.dispatch_widgets(true) {
-                if self.ui_context.propagate_event(&ev, w_ptr) {
+            for root in self.dispatch_widgets(true) {
+                if self.ui_context.propagate_event(&ev, root) {
                     handled = true;
                     break;
                 }
