@@ -941,11 +941,11 @@ impl Application for TypefaceApp {
             // Left panel plate + children.
             self.plate_prims(Rect { x: left_panel_x, y: 10.0, width: left_panel_w, height: content_h }, &mut pc);
             unsafe {
-                cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).search_box.as_ptr_mut(), &mut pc);
+                cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).search_box, &mut pc);
                 (*self_ptr).list_region.push_prims(true, &mut pc);
                 for btn in (*self_ptr).font_buttons.iter_mut() {
                     if btn.rect().0 > -9000.0 {
-                        cce_ui::scene::painter::paint_root_into(&self.ui_context, btn.as_ptr_mut(), &mut pc);
+                        cce_ui::scene::painter::paint_root_into(&self.ui_context, &*btn, &mut pc);
                     }
                 }
             }
@@ -954,11 +954,11 @@ impl Application for TypefaceApp {
             if self.selected_family.is_some() {
                 unsafe {
                     (*self_ptr).mid_region.push_prims(false, &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).btn_open_folder.as_ptr_mut(), &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).btn_remove_font.as_ptr_mut(), &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).style_dropdown.as_ptr_mut(), &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).size_spinbox.as_ptr_mut(), &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).preview_box.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_open_folder, &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_remove_font, &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).style_dropdown, &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).size_spinbox, &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).preview_box, &mut pc);
                 }
             }
             // Bottom bar plate + children (select mode).
@@ -966,8 +966,8 @@ impl Application for TypefaceApp {
                 let bar_y = h_f32 - select_bar_h - 10.0;
                 self.plate_prims(Rect { x: left_panel_x, y: bar_y, width: w_f32 - 20.0, height: select_bar_h }, &mut pc);
                 unsafe {
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).select_cancel_btn.as_ptr_mut(), &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, (*self_ptr).select_confirm_btn.as_ptr_mut(), &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).select_cancel_btn, &mut pc);
+                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).select_confirm_btn, &mut pc);
                 }
             }
         }
