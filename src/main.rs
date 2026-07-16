@@ -198,7 +198,32 @@ impl ScrollRegion {
     }
 }
 
+/// App shortcuts, resolved once at startup from input.kdl
+/// (`cce-fonts` domain → `cce-ui` domain), defaulting to the historical keys.
+struct FontsKeys {
+    refresh: String,
+    open_search: String,
+    focus_preview: String,
+    open_folder: String,
+    remove_font: String,
+}
+
+impl FontsKeys {
+    fn load() -> Self {
+        let get = cce_ui::input::app_chord;
+        Self {
+            refresh: get("refresh", "ctrl+r"),
+            open_search: get("open_search", "ctrl+f"),
+            focus_preview: get("focus_preview", "ctrl+e"),
+            open_folder: get("open_folder", "ctrl+o"),
+            remove_font: get("remove_font", "delete"),
+        }
+    }
+}
+
 struct TypefaceApp {
+    keys: FontsKeys,
+
     // Browse panel
     search_box: cce_ui::widget::Adapted<TextBox>,
     list_region: ScrollRegion,
@@ -586,6 +611,7 @@ impl Application for TypefaceApp {
 
         let all_fonts = pages::fetch_fonts();
         let mut app = Self {
+            keys: FontsKeys::load(),
             search_box,
             list_region: ScrollRegion::new(),
             list_item_h,
@@ -1294,41 +1320,33 @@ impl Application for TypefaceApp {
         let mut handled = false;
         let mut msg_out = None;
 
-        // Custom keyboard shortcuts
-        if event.ctrl && event.state == ElementState::Pressed {
-            if let Key::Character(ref ch) = event.logical_key {
-                match ch.to_lowercase().as_str() {
-                    "r" => {
-                        msg_out = Some(AppMessage::RefreshFonts);
-                        handled = true;
-                    }
-                    "f" => {
-                        self.search_box.focus();
-                        self.ui_context.set_focused(&mut self.search_box);
-                        self.preview_box.unfocus();
-                        handled = true;
-                    }
-                    "e" => {
-                        self.preview_box.focus();
-                        self.ui_context.set_focused(&mut self.preview_box);
-                        self.search_box.unfocus();
-                        handled = true;
-                    }
-                    "o" => {
-                        msg_out = Some(AppMessage::OpenFolder);
-                        handled = true;
-                    }
-                    _ => {}
-                }
+        // Custom keyboard shortcuts (input.kdl `cce-fonts` domain)
+        if event.state == ElementState::Pressed {
+            let m = |chord: &str| cce_ui::widget::match_key_shortcut(event, chord);
+            if m(&self.keys.refresh) {
+                msg_out = Some(AppMessage::RefreshFonts);
+                handled = true;
+            } else if m(&self.keys.open_search) {
+                self.search_box.focus();
+                self.ui_context.set_focused(&mut self.search_box);
+                self.preview_box.unfocus();
+                handled = true;
+            } else if m(&self.keys.focus_preview) {
+                self.preview_box.focus();
+                self.ui_context.set_focused(&mut self.preview_box);
+                self.search_box.unfocus();
+                handled = true;
+            } else if m(&self.keys.open_folder) {
+                msg_out = Some(AppMessage::OpenFolder);
+                handled = true;
+            } else if m(&self.keys.remove_font) {
+                msg_out = Some(AppMessage::RemoveFont);
+                handled = true;
             }
         }
 
         if !handled && event.state == ElementState::Pressed {
             match event.logical_key {
-                Key::Named(NamedKey::Delete) => {
-                    msg_out = Some(AppMessage::RemoveFont);
-                    handled = true;
-                }
                 Key::Character(ref ch) if ch == "+" || ch == "=" => {
                     if self.selected_family.is_some() {
                         let (_, max) = self.size_spinbox.range();
