@@ -798,7 +798,16 @@ impl Application for TypefaceApp {
         }
     }
 
-    fn tick(&mut self, dt: f32, _needs_rebuild: &mut bool) {
+    fn tick(&mut self, dt: f32, needs_rebuild: &mut bool) {
+        // Pump the widget tick walk: animating widgets (the style dropdown's
+        // expand/contract menu) register as tick receivers and report changed
+        // until their transition lands — without this a closing menu freezes
+        // fully open.
+        if self.ui_context.tick(dt) {
+            *needs_rebuild = true;
+            self.needs_rebuild = true;
+        }
+
         if self.click_timer > 0.0 {
             self.click_timer -= dt;
         }
