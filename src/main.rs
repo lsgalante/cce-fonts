@@ -567,6 +567,12 @@ impl Application for TypefaceApp {
         Some(&self.ui_context)
     }
 
+    // The engine ticks the exposed context each loop — this is what drives the
+    // dropdown expand/contract animation frames.
+    fn ui_context_mut(&mut self) -> Option<&mut cce_ui::context::UiContext> {
+        Some(&mut self.ui_context)
+    }
+
     /// The font picker previews arbitrary installed families: the engine's render FontSystem
     /// must contain the system fonts, or preview text asking for a system-only family is
     /// silently invisible.
@@ -1108,23 +1114,9 @@ impl Application for TypefaceApp {
         // labels carry bounds equal to the popover rect, which both clips them to the plate
         // and exempts them from the occlusion clamp (the is-overlay-text convention).
         if self.selected_family.is_some() && self.style_dropdown.open {
-            let mut coll = cce_ui::layout::PopoverCollector::new();
-            self.style_dropdown.render_popover(&mut coll);
-            for &(c, x, y, w, h) in &coll.rects {
-                quad(x, y, w, h, c, &mut pc);
-            }
-            let pop_bounds = self
-                .style_dropdown
-                .popover_rect()
-                .map(|(x, y, w, h)| [x, y, x + w, y + h]);
-            for (content, size, tx, ty, color, _font, _bounds) in coll.texts {
-                let color_u8 = [
-                    (color[0] * 255.0).clamp(0.0, 255.0) as u8,
-                    (color[1] * 255.0).clamp(0.0, 255.0) as u8,
-                    (color[2] * 255.0).clamp(0.0, 255.0) as u8,
-                ];
-                pc.text_with(content, tx, ty, size, color_u8, Some("monospace".to_string()), pop_bounds);
-            }
+            // PaintCtx is a RenderTarget: the popover draws its real prims (the
+            // expanded inset-plate surface) with its own per-label bounds.
+            self.style_dropdown.render_popover(&mut pc);
         }
 
         Some(pc.finish())
