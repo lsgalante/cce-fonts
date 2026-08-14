@@ -372,8 +372,23 @@ impl TypefaceApp {
         self.families = self.extract_families(&self.all_fonts);
         let query = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
         self.filtered = self.filter_families(&self.families, query);
+        // Ids are globally monotonic and never reused, so the fresh buttons register under
+        // NEW ids; the outgoing ones would keep pointing into this Vec's freed buffer, and
+        // the engine derefs the whole registry on every left press. Drop them first.
+        let stale: Vec<_> = self.font_buttons.iter().map(|b| b.id()).collect();
+        for id in stale {
+            self.ui_context.unregister_widget(id);
+        }
         self.font_buttons = self.filtered.iter().map(|f| Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f)).collect();
-        
+        // ...and register the replacements now. `dispatch_widgets()` reports every row whose
+        // rect passes the parked-sentinel gate, and fresh rows are (0,0,0,0) so they pass it
+        // immediately — but `register_widgets()` only runs in the next layout pass, so the
+        // ids were reported unregistered until then and the router dropped those events.
+        for btn in self.font_buttons.iter_mut() {
+            let (id, ptr) = (btn.id(), btn.as_ptr_mut());
+            self.ui_context.register_widget(id, ptr);
+        }
+
         if let Some(sel) = self.selected_idx {
             if sel >= self.filtered.len() {
                 self.selected_idx = None;
@@ -753,8 +768,21 @@ impl Application for TypefaceApp {
             AppMessage::SearchChanged => {
                 let query = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
                 self.filtered = self.filter_families(&self.families, query);
+                // See the note in refresh(): monotonic ids mean the outgoing buttons must be
+                // unregistered or the registry keeps dangling pointers. This path runs on
+                // every keystroke in the filter box, so it is the hottest producer of them.
+                let stale: Vec<_> = self.font_buttons.iter().map(|b| b.id()).collect();
+                for id in stale {
+                    self.ui_context.unregister_widget(id);
+                }
                 self.font_buttons = self.filtered.iter().map(|f| Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f)).collect();
-                
+                // Register the replacements now rather than waiting for the next layout pass —
+                // see refresh(). This is the path that produced the stale-root spam.
+                for btn in self.font_buttons.iter_mut() {
+                    let (id, ptr) = (btn.id(), btn.as_ptr_mut());
+                    self.ui_context.register_widget(id, ptr);
+                }
+
                 // reset or re-evaluate selection
                 self.selected_idx = None;
                 self.selected_family = None;
