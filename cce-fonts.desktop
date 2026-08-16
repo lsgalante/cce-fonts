@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=CCE Fonts
+Comment=Font preview and management
+Exec=cce-fonts
+Icon=preferences-desktop-font
+Categories=Graphics;Settings;System;
+Terminal=false
+StartupWMClass=cce-fonts
