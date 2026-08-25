@@ -1000,8 +1000,8 @@ impl Application for TypefaceApp {
             if fill[3] > 0.001 {
                 fill[3] = cce_ui::color::root_plate_opacity();
             }
-            let radius = cce_ui::colors::root_plate_corner_radius();
-            let radii = (radius, radius, radius, radius);
+            // Silhouette radii (cce-ui RFC 7b): matches the compositor clip.
+            let radii = cce_ui::scene::paint::PlateSpec::radii_for((true, true, true, true));
             let rect = Rect { x: 0.0, y: 0.0, width: w_f32, height: h_f32 };
             pc.border(rect, radii, fill, [0.22, 0.22, 0.28, 1.0], 1.5);
         }
