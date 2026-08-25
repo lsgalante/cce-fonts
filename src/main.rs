@@ -998,9 +998,9 @@ impl Application for TypefaceApp {
         {
             let mut fill = bg_color;
             if fill[3] > 0.001 {
-                fill[3] = cce_ui::color::active_backplate_opacity();
+                fill[3] = cce_ui::color::root_plate_opacity();
             }
-            let radius = cce_ui::colors::backplate_corner_radius();
+            let radius = cce_ui::colors::root_plate_corner_radius();
             let radii = (radius, radius, radius, radius);
             let rect = Rect { x: 0.0, y: 0.0, width: w_f32, height: h_f32 };
             pc.border(rect, radii, fill, [0.22, 0.22, 0.28, 1.0], 1.5);
