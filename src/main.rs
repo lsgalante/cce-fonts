@@ -1404,8 +1404,11 @@ impl Application for TypefaceApp {
             }
         }
 
-        if !handled {
-            // Arrow navigation
+        if !handled && !self.style_dropdown.open {
+            // Arrow navigation — family list only while no dropdown is open:
+            // an open style dropdown takes the arrows for its own hover (via
+            // the propagate loop below), and consuming them here left it
+            // keyboard-navigable in every way except the one that matters.
             let direction = match event.logical_key {
                 Key::Named(NamedKey::ArrowUp) => Some(BrowseNavigation::Up),
                 Key::Named(NamedKey::ArrowDown) => Some(BrowseNavigation::Down),
