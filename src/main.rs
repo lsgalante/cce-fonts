@@ -5,7 +5,7 @@ use cce_ui::cosmic_text::FontSystem;
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost, Event,
-    TextBox, Button, Key, NamedKey, Dropdown, Spinbox,
+    TextBox, Button, Key, NamedKey, Dropdown, Spinbox, ScrollRegion,
 };
 
 
@@ -29,172 +29,16 @@ enum AppMessage {
     RefreshFonts,
 }
 
-/// App-owned scroll region replacing the dissolved ScrollBox / List (fonts used List with
-/// columns=None — a pure scroll frame; the rows here are standalone Button widgets). State,
-/// wheel/scrollbar-drag/keyboard behavior, and the bg/track/thumb prims replicate the
-/// legacy widgets verbatim.
-struct ScrollRegion {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    scroll_y: f32,
-    content_h: f32,
-    viewport_y: f32,
-    viewport_h: f32,
-    dragging: bool,
-    drag_offset_y: f32,
-    hovered: bool,
-}
-
-impl ScrollRegion {
-    fn new() -> Self {
-        Self {
-            x: 0.0, y: 0.0, w: 0.0, h: 0.0,
-            scroll_y: 0.0, content_h: 0.0, viewport_y: 0.0, viewport_h: 0.0,
-            dragging: false, drag_offset_y: 0.0, hovered: false,
-        }
-    }
-
-    fn set_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.w = w; self.h = h;
-    }
-
-    fn update_bounds(&mut self, content_h: f32, viewport_y: f32, viewport_h: f32) {
-        self.content_h = content_h;
-        self.viewport_y = viewport_y;
-        self.viewport_h = viewport_h;
-        self.scroll_y = self.scroll_y.clamp(0.0, self.max_scroll());
-    }
-
-    fn max_scroll(&self) -> f32 {
-        (self.content_h - self.viewport_h).max(0.0)
-    }
-
-    fn hit(&self, px: f32, py: f32) -> bool {
-        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
-    }
-
-    fn get_item_draw_y(&self, virtual_y: f32, item_h: f32) -> Option<f32> {
-        let draw_y = self.viewport_y + virtual_y - self.scroll_y;
-        if draw_y >= self.viewport_y - 1.0 && draw_y + item_h <= self.viewport_y + self.viewport_h + 1.0 {
-            Some(draw_y)
-        } else {
-            None
-        }
-    }
-
-    /// Scrollbar geometry: (sb_x, track_y, sb_w, track_h, thumb_y, thumb_h).
-    fn scrollbar_geom(&self) -> (f32, f32, f32, f32, f32, f32) {
-        let sb_w = cce_ui::layout::scrollbar_width();
-        let sb_x = self.x + self.w - sb_w - 4.0;
-        let track_h = self.viewport_h - 8.0;
-        let track_y = self.viewport_y + 4.0;
-        let visible_ratio = self.viewport_h / self.content_h.max(1.0);
-        let thumb_h = if track_h <= 20.0 { track_h } else { (track_h * visible_ratio).clamp(20.0, track_h) };
-        let scroll_ratio = if self.max_scroll() > 0.0 { self.scroll_y / self.max_scroll() } else { 0.0 };
-        let thumb_y = track_y + scroll_ratio * (track_h - thumb_h);
-        (sb_x, track_y, sb_w, track_h, thumb_y, thumb_h)
-    }
-
-    fn hit_scrollbar(&self, px: f32, py: f32) -> bool {
-        if self.content_h <= self.viewport_h {
-            return false;
-        }
-        let (sb_x, track_y, sb_w, track_h, _, _) = self.scrollbar_geom();
-        px >= sb_x - 4.0 && px <= sb_x + sb_w + 4.0 && py >= track_y && py <= track_y + track_h
-    }
-
-    /// Left press: scrollbar thumb grab or track jump (the legacy ScrollBox::mouse_input).
-    fn press(&mut self, px: f32, py: f32) -> bool {
-        if !self.hit_scrollbar(px, py) {
-            self.dragging = false;
-            return false;
-        }
-        self.dragging = true;
-        let (_, track_y, _, track_h, thumb_y, thumb_h) = self.scrollbar_geom();
-        let click_offset = py - thumb_y;
-        if click_offset >= 0.0 && click_offset <= thumb_h {
-            self.drag_offset_y = click_offset;
-        } else {
-            self.drag_offset_y = thumb_h / 2.0;
-            let target = py - self.drag_offset_y;
-            let ratio = if track_h - thumb_h > 0.0 {
-                ((target - track_y) / (track_h - thumb_h)).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            self.scroll_y = ratio * self.max_scroll();
-        }
-        true
-    }
-
-    fn release(&mut self) {
-        self.dragging = false;
-    }
-
-    fn drag_move(&mut self, py: f32) -> bool {
-        if !self.dragging {
-            return false;
-        }
-        let (_, track_y, _, track_h, _, thumb_h) = self.scrollbar_geom();
-        let target = py - self.drag_offset_y;
-        let ratio = if track_h - thumb_h > 0.0 {
-            ((target - track_y) / (track_h - thumb_h)).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let old = self.scroll_y;
-        self.scroll_y = ratio * self.max_scroll();
-        (self.scroll_y - old).abs() > 0.01
-    }
-
-    fn wheel(&mut self, delta: &MouseScrollDelta, px: f32, py: f32) -> bool {
-        if !self.hit(px, py) {
-            return false;
-        }
-        let dy = match delta {
-            MouseScrollDelta::LineDelta(_, y) => -y * 24.0,
-            MouseScrollDelta::PixelDelta(pos) => -pos.y as f32,
-        };
-        let old = self.scroll_y;
-        self.scroll_y = (self.scroll_y + dy).clamp(0.0, self.max_scroll());
-        (self.scroll_y - old).abs() > 0.01
-    }
-
-    /// Hover-scoped keyboard scrolling (the legacy ScrollBox handled these when focused or
-    /// hovered; the dissolved region keeps the hover half, which is how it was reached here).
-    fn keyboard(&mut self, event: &KeyEvent) -> bool {
-        if !self.hovered || event.state != ElementState::Pressed {
-            return false;
-        }
-        let max = self.max_scroll();
-        let old = self.scroll_y;
-        match &event.logical_key {
-            Key::Named(NamedKey::ArrowDown) => self.scroll_y = (self.scroll_y + 24.0).clamp(0.0, max),
-            Key::Named(NamedKey::ArrowUp) => self.scroll_y = (self.scroll_y - 24.0).clamp(0.0, max),
-            Key::Named(NamedKey::PageDown) => self.scroll_y = (self.scroll_y + self.viewport_h).clamp(0.0, max),
-            Key::Named(NamedKey::PageUp) => self.scroll_y = (self.scroll_y - self.viewport_h).clamp(0.0, max),
-            Key::Named(NamedKey::Home) => self.scroll_y = 0.0,
-            Key::Named(NamedKey::End) => self.scroll_y = max,
-            _ => return false,
-        }
-        (self.scroll_y - old).abs() > 0.01
-    }
-
-    /// The legacy paint, verbatim: plain bg quad (ScrollBox::extra_quads) — plus, for the
-    /// List flavor, the rounded bg the walk's leaf branch emitted from all_rounded_quads —
-    /// then the scrollbar track and thumb.
-    fn push_prims(&self, rounded_list_frame: bool, pc: &mut cce_ui::scene::paint::PaintCtx) {
-        use cce_ui::scene::layout::Rect;
-        let rect = Rect { x: self.x, y: self.y, width: self.w, height: self.h };
-        let _ = rounded_list_frame;
-        pc.quad(rect, cce_ui::color::list_bg_color());
-        if self.content_h > self.viewport_h {
-            let (sb_x, track_y, sb_w, track_h, thumb_y, thumb_h) = self.scrollbar_geom();
-            pc.quad(Rect { x: sb_x, y: track_y, width: sb_w, height: track_h }, cce_ui::color::scrollbar_track_color());
-            pc.quad(Rect { x: sb_x, y: thumb_y, width: sb_w, height: thumb_h }, cce_ui::color::scrollbar_thumb_color());
-        }
+/// The retired local ScrollRegion's `push_prims` look, verbatim: flat bg fill
+/// plus a flat scrollbar (the toolkit `ScrollRegion::push_prims` draws the
+/// bordered frame + pill bars, which this app's panels never had).
+fn emit_region_quads(r: &ScrollRegion, pc: &mut cce_ui::scene::paint::PaintCtx) {
+    use cce_ui::scene::layout::Rect;
+    let mut v = Vec::new();
+    r.push_quads(&mut v);
+    r.push_scrollbar_quads(&mut v);
+    for (x, y, w, h, c) in v {
+        pc.quad(Rect { x, y, width: w, height: h }, c);
     }
 }
 
@@ -634,7 +478,7 @@ impl Application for TypefaceApp {
         let mut app = Self {
             keys: FontsKeys::load(),
             search_box,
-            list_region: ScrollRegion::new(),
+            list_region: ScrollRegion::new(0.0, 4.0),
             list_item_h,
             font_buttons: Vec::new(),
             style_dropdown,
@@ -664,7 +508,7 @@ impl Application for TypefaceApp {
             scale_factor: 1.0,
             font_system: cce_ui::create_font_system_with_system_fonts(),
             needs_rebuild: true,
-            mid_region: ScrollRegion::new(),
+            mid_region: ScrollRegion::new(0.0, 4.0),
             widgets_registered: false,
             ui_context: cce_ui::context::UiContext::new(),
         };
@@ -881,7 +725,7 @@ impl Application for TypefaceApp {
             self.mid_region.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
 
             let mid_content_h = if self.select_mode { 440.0 } else { 520.0 };
-            self.mid_region.update_bounds(mid_content_h, 10.0, content_h);
+            self.mid_region.update_bounds_raw(mid_content_h, 10.0, content_h);
 
             let bar_y = h_f32 - select_bar_h - 10.0;
 
@@ -896,12 +740,12 @@ impl Application for TypefaceApp {
             self.list_region.set_rect(list_x, list_y, list_w, list_h);
             // The dissolved List's content math: count * (adjusted item height + gap) + 4.
             let item_full = self.list_item_h + 4.0;
-            self.list_region.update_bounds(self.filtered.len() as f32 * item_full + 4.0, list_y, list_h);
+            self.list_region.update_bounds_raw(self.filtered.len() as f32 * item_full + 4.0, list_y, list_h);
 
             // Layout list buttons
             for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
                 let item_full = self.list_item_h + 4.0;
-                if let Some(draw_y) = self.list_region.get_item_draw_y(idx as f32 * item_full, self.list_item_h) {
+                if let Some(draw_y) = self.list_region.get_draw_y(idx as f32 * item_full, self.list_item_h) {
                     btn.set_rect(list_x + 4.0, draw_y, list_w - 8.0, 24.0);
                 } else {
                     btn.set_rect(-9999.0, -9999.0, 0.0, 0.0);
@@ -1011,18 +855,26 @@ impl Application for TypefaceApp {
             self.plate_prims(Rect { x: left_panel_x, y: 10.0, width: left_panel_w, height: content_h }, &mut pc);
             unsafe {
                 cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).search_box, &mut pc);
-                (*self_ptr).list_region.push_prims(true, &mut pc);
+                emit_region_quads(&(*self_ptr).list_region, &mut pc);
+                // Rows under the list-viewport clip: `get_draw_y` returns
+                // PARTIALLY visible rows (toolkit ScrollRegion intersection
+                // contract), so an edge row renders cut instead of vanishing.
+                // (Its full rect can overlap the search box's hit area above;
+                // the router dispatches the search box first, so it wins.)
+                let lr = &(*self_ptr).list_region;
+                pc.push_clip(Rect { x: lr.x, y: lr.viewport_y, width: lr.w, height: lr.viewport_h });
                 for btn in (*self_ptr).font_buttons.iter_mut() {
                     if btn.rect().0 > -9000.0 {
                         cce_ui::scene::painter::paint_root_into(&self.ui_context, &*btn, &mut pc);
                     }
                 }
+                pc.pop_clip();
             }
             // Mid panel plate + children (when a family is selected, like the old links).
             self.plate_prims(Rect { x: mid_panel_x, y: 10.0, width: mid_panel_w, height: content_h }, &mut pc);
             if self.selected_family.is_some() {
                 unsafe {
-                    (*self_ptr).mid_region.push_prims(false, &mut pc);
+                    emit_region_quads(&(*self_ptr).mid_region, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_open_folder, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_remove_font, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).style_dropdown, &mut pc);
@@ -1158,14 +1010,13 @@ impl Application for TypefaceApp {
         let old_size = self.preview_box.font_size;
 
         // The dissolved scroll regions: scrollbar-thumb drags and hover tracking.
-        if self.list_region.drag_move(py) {
+        // Toolkit cursor_moved = the old drag_move + manual hover tracking.
+        if self.list_region.cursor_moved(px, py) {
             changed = true;
         }
-        if self.mid_region.drag_move(py) {
+        if self.mid_region.cursor_moved(px, py) {
             changed = true;
         }
-        self.list_region.hovered = self.list_region.hit(px, py);
-        self.mid_region.hovered = self.mid_region.hit(px, py);
 
         // Routed dispatch (6bd shrink): one PointerMove through the router per roster
         // root — hover bookkeeping plus the router's drag forwarding (replaces the
