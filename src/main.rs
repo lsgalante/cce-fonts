@@ -29,13 +29,25 @@ enum AppMessage {
     RefreshFonts,
 }
 
-/// The retired local ScrollRegion's `push_prims` look, verbatim: flat bg fill
-/// plus a flat scrollbar (the toolkit `ScrollRegion::push_prims` draws the
-/// bordered frame + pill bars, which this app's panels never had).
+/// The retired local ScrollRegion's flat bg fill (the toolkit
+/// `ScrollRegion::push_prims` draws the bordered frame + pill bars, which this
+/// app's panels never had). With the regions on sink-behind, `push_quads` also
+/// lays a sunk scrollbar UNDER the translucent fill; the raised layer is
+/// emitted separately, after the rows, by [`emit_region_bar`].
 fn emit_region_quads(r: &ScrollRegion, pc: &mut cce_ui::scene::paint::PaintCtx) {
     use cce_ui::scene::layout::Rect;
     let mut v = Vec::new();
     r.push_quads(&mut v);
+    for (x, y, w, h, c) in v {
+        pc.quad(Rect { x, y, width: w, height: h }, c);
+    }
+}
+
+/// The raised scrollbar layer (quiet while the bar is sunk): emitted after the
+/// panel content so the bar rides over the rows, the designer treatment.
+fn emit_region_bar(r: &ScrollRegion, pc: &mut cce_ui::scene::paint::PaintCtx) {
+    use cce_ui::scene::layout::Rect;
+    let mut v = Vec::new();
     r.push_scrollbar_quads(&mut v);
     for (x, y, w, h, c) in v {
         pc.quad(Rect { x, y, width: w, height: h }, c);
@@ -478,7 +490,9 @@ impl Application for TypefaceApp {
         let mut app = Self {
             keys: FontsKeys::load(),
             search_box,
-            list_region: ScrollRegion::new(0.0, 4.0),
+            list_region: ScrollRegion::new(0.0, 4.0)
+                .with_sink_behind(true)
+                .with_edge_inset(cce_ui::layout::scrollbar_inset()),
             list_item_h,
             font_buttons: Vec::new(),
             style_dropdown,
@@ -508,7 +522,9 @@ impl Application for TypefaceApp {
             scale_factor: 1.0,
             font_system: cce_ui::create_font_system_with_system_fonts(),
             needs_rebuild: true,
-            mid_region: ScrollRegion::new(0.0, 4.0),
+            mid_region: ScrollRegion::new(0.0, 4.0)
+                .with_sink_behind(true)
+                .with_edge_inset(cce_ui::layout::scrollbar_inset()),
             widgets_registered: false,
             ui_context: cce_ui::context::UiContext::new(),
         };
@@ -682,6 +698,18 @@ impl Application for TypefaceApp {
         // until their transition lands — without this a closing menu freezes
         // fully open.
         if self.ui_context.tick(dt) {
+            *needs_rebuild = true;
+            self.needs_rebuild = true;
+        }
+
+        // Raise/sink upkeep for the panel scrollbars: true while the
+        // post-scroll hold runs or on the depth flip, keeping frames coming
+        // so the sink actually renders.
+        if self.list_region.tick(dt) {
+            *needs_rebuild = true;
+            self.needs_rebuild = true;
+        }
+        if self.mid_region.tick(dt) {
             *needs_rebuild = true;
             self.needs_rebuild = true;
         }
@@ -958,6 +986,14 @@ impl Application for TypefaceApp {
             }
 
             self.push_alphabet_preview(&mut pc);
+        }
+
+        // Raised scrollbars ride over the panel content (the sunk layers went
+        // under the region bg fills inside emit_region_quads); the style
+        // dropdown's popover still stacks above them.
+        emit_region_bar(&self.list_region, &mut pc);
+        if self.selected_family.is_some() {
+            emit_region_bar(&self.mid_region, &mut pc);
         }
 
         if self.select_mode {
