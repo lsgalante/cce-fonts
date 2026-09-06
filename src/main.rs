@@ -127,7 +127,7 @@ struct TypefaceApp {
     font_system: FontSystem,
     needs_rebuild: bool,
 
-    // Containers (root Backplate, the three Plates, and the ScrollBox/List are DISSOLVED:
+    // Containers (root plate container, the three Plates, and the ScrollBox/List are DISSOLVED:
     // plates and scroll frames are prims, scroll state lives in the ScrollRegions,
     // children are dispatched/walked directly, panel rects are computed)
     mid_region: ScrollRegion,
@@ -455,8 +455,8 @@ impl Application for TypefaceApp {
         true
     }
 
-    fn is_movable_backplate_at(&self, px: f32, py: f32) -> bool {
-        // Root Backplate dissolved: the surface itself is the movable plate.
+    fn is_movable_root_plate_at(&self, px: f32, py: f32) -> bool {
+        // root plate container dissolved: the surface itself is the movable plate.
         self.ui_context.drag_allowed_at(px, py)
     }
 
@@ -862,7 +862,7 @@ impl Application for TypefaceApp {
             (base_low[2] * 1.17).min(1.0),
             base_low[3],
         ];
-        // 2. The dissolved root Backplate's plate (bg at backplate opacity, config border
+        // 2. The dissolved root plate container's plate (bg at root plate opacity, config border
         // and radius), then the dissolved panels' plates and their children walked in the
         // legacy panel order.
         use cce_ui::scene::layout::Rect;
