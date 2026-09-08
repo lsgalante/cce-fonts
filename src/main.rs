@@ -781,8 +781,8 @@ impl Application for TypefaceApp {
             }
 
             // Preview panel widgets layout
-            let style_dropdown_h = cce_ui::layout::dropdown_height() + cce_ui::widget::label_offset(&self.style_dropdown);
-            let size_spinbox_h = cce_ui::layout::spinbox_height() + cce_ui::widget::label_offset(&self.size_spinbox);
+            let style_dropdown_h = cce_ui::layout::dropdown_height() + self.style_dropdown.label_strip();
+            let size_spinbox_h = cce_ui::layout::spinbox_height() + self.size_spinbox.label_strip();
             let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
 
             let scroll_y = self.mid_region.scroll_y;
