@@ -9,6 +9,9 @@ use cce_ui::widget::{
 };
 
 
+/// How long after a click on a family row a second click on the same row
+/// still counts as a double-click (and, in `--select` mode, confirms).
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(350);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowseNavigation {
@@ -100,7 +103,11 @@ struct TypefaceApp {
     select_confirm_btn: cce_ui::widget::Adapted<cce_ui::widget::Button>,
     select_mode: bool,
     last_click_idx: Option<usize>,
-    click_timer: f32,
+    /// When that click landed. A wall clock, not a `dt` countdown: `dt` is
+    /// animation time, clamped to one frame after an idle sleep, and the app
+    /// idles between clicks — so the 0.35 s window stayed open for seconds
+    /// and a leisurely second click confirmed as a double-click.
+    last_click_at: Option<std::time::Instant>,
 
     // State
     all_fonts: Vec<pages::FontEntry>,
@@ -504,7 +511,7 @@ impl Application for TypefaceApp {
             select_confirm_btn,
             select_mode,
             last_click_idx: None,
-            click_timer: 0.0,
+            last_click_at: None,
             all_fonts: all_fonts.clone(),
             families: Vec::new(),
             filtered: Vec::new(),
@@ -714,9 +721,6 @@ impl Application for TypefaceApp {
             self.needs_rebuild = true;
         }
 
-        if self.click_timer > 0.0 {
-            self.click_timer -= dt;
-        }
     }
 
     fn display_list(&mut self, size: LogicalSize, scale: f64) -> Option<cce_ui::scene::paint::DisplayList> {
@@ -1157,7 +1161,8 @@ impl Application for TypefaceApp {
 
         for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
             if btn.rect().0 > -9000.0 && btn.take_click() {
-                if self.select_mode && self.last_click_idx == Some(idx) && self.click_timer > 0.0 {
+                let double = self.last_click_at.is_some_and(|t| t.elapsed() < DOUBLE_CLICK);
+                if self.select_mode && self.last_click_idx == Some(idx) && double {
                     let selected = self.filtered[idx].clone();
                     print!("{} {}", selected, self.size_spinbox.value);
                     use std::io::Write;
@@ -1165,7 +1170,7 @@ impl Application for TypefaceApp {
                     std::process::exit(0);
                 }
                 self.last_click_idx = Some(idx);
-                self.click_timer = 0.35;
+                self.last_click_at = Some(std::time::Instant::now());
                 msg_out = Some(AppMessage::SelectFamily(idx));
                 break;
             }
