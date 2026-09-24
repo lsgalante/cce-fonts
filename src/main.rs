@@ -859,28 +859,12 @@ impl Application for TypefaceApp {
         let base_low = cce_ui::colors::page_low_color();
         let border_col = cce_ui::colors::color_borders_color();
 
-        // 1. General window background
-        let bg_color = [
-            (base_low[0] * 1.17).min(1.0),
-            (base_low[1] * 1.17).min(1.0),
-            (base_low[2] * 1.17).min(1.0),
-            base_low[3],
-        ];
-        // 2. The dissolved root plate container's plate (bg at root plate opacity, config border
-        // and radius), then the dissolved panels' plates and their children walked in the
-        // legacy panel order.
+        // 1. The window base, then the dissolved panels' plates and their children
+        // walked in the legacy panel order.
         use cce_ui::scene::layout::Rect;
         let mut pc = cce_ui::scene::paint::PaintCtx::new();
-        {
-            let mut fill = bg_color;
-            if fill[3] > 0.001 {
-                fill[3] = cce_ui::color::root_plate_opacity();
-            }
-            // Silhouette radii (cce-ui RFC 7b): matches the compositor clip.
-            let radii = cce_ui::scene::paint::PlateSpec::radii_for((true, true, true, true));
-            let rect = Rect { x: 0.0, y: 0.0, width: w_f32, height: h_f32 };
-            pc.border(rect, radii, fill, [0.22, 0.22, 0.28, 1.0], 1.5);
-        }
+        // The standard root plate (cce-ui PlateSpec::window).
+        pc.root_plate(w_f32, h_f32);
         {
             let self_ptr = self as *mut Self;
             // Left panel plate + children.
