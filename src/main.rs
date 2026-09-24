@@ -13,6 +13,38 @@ use cce_ui::widget::{
 /// still counts as a double-click (and, in `--select` mode, confirms).
 const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(350);
 
+/// The family list pane's width and the select-mode bar's height — sizes, not
+/// spacing; every inset and gap around them comes from the ladder.
+const LEFT_PANEL_W: f32 = 270.0;
+const SELECT_BAR_H: f32 = 48.0;
+/// The family list's row height (its rows are `list_item_h` tall, but
+/// `scroll_to_index` keeps the legacy 24 it always scrolled by).
+const LIST_ROW_H: f32 = 24.0;
+
+/// The family list's row gap, doubling as its inner inset.
+/// style: deliberate — the rows are 24px scan lines and the pane gap would
+/// triple their pitch; this is the toolkit `List::new(24, 4)` metric the
+/// list dissolved from, kept tight so a long family list stays scannable.
+fn list_row_gap() -> f32 {
+    4.0
+}
+
+/// The mid pane's preview form, stacked by the ladder inside the pane's
+/// scroll content: each control's virtual y (from the pane's top rim) and
+/// height, and the content height that stack adds up to.
+struct PreviewForm {
+    buttons_y: f32,
+    dropdown_y: f32,
+    dropdown_h: f32,
+    spinbox_y: f32,
+    spinbox_h: f32,
+    preview_y: f32,
+    preview_h: f32,
+    alphabet_y: f32,
+    alphabet_h: f32,
+    content_h: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowseNavigation {
     Up,
@@ -168,20 +200,54 @@ impl TypefaceApp {
         }
     }
 
+    /// The panes' height: the window less the root inset at top and bottom,
+    /// and in select mode the bar and the root gap that separates it.
     fn content_h(&self) -> f32 {
         let h = self.height as f32;
+        let inset = cce_ui::layout::root_plate_inset();
         if self.select_mode {
-            (h - 30.0 - 48.0).max(100.0)
+            (h - 2.0 * inset - cce_ui::layout::root_plate_gap() - SELECT_BAR_H).max(100.0)
         } else {
-            (h - 20.0).max(100.0)
+            (h - 2.0 * inset).max(100.0)
         }
     }
 
-    /// The dissolved mid panel's rect (was `mid_panel.rect()`).
+    /// The dissolved mid panel's rect (was `mid_panel.rect()`): the root gap
+    /// right of the family list pane, the root inset from the other edges.
     fn mid_panel_rect(&self) -> (f32, f32, f32, f32) {
-        let left_panel_w = 270.0;
-        let mid_x = 10.0 + left_panel_w + 12.0;
-        (mid_x, 10.0, self.width as f32 - 10.0 - mid_x, self.content_h())
+        let inset = cce_ui::layout::root_plate_inset();
+        let mid_x = inset + LEFT_PANEL_W + cce_ui::layout::root_plate_gap();
+        (mid_x, inset, self.width as f32 - inset - mid_x, self.content_h())
+    }
+
+    /// The preview form's stack (see [`PreviewForm`]): the pane padding at
+    /// the top, the control gap between the form's controls, the pane gap
+    /// before the alphabet box, and the pane padding below it.
+    fn preview_form(&self) -> PreviewForm {
+        let pad = cce_ui::layout::plate_padding();
+        let gap = cce_ui::layout::plate_gap();
+        let control_gap = cce_ui::layout::control_gap();
+        let dropdown_h = cce_ui::layout::dropdown_height() + self.style_dropdown.label_strip();
+        let spinbox_h = cce_ui::layout::spinbox_height() + self.size_spinbox.label_strip();
+        let preview_h = if self.select_mode { 120.0 } else { 180.0 };
+        let alphabet_h = if self.select_mode { 102.0 } else { 120.0 };
+        let buttons_y = pad;
+        let dropdown_y = buttons_y + 28.0 + control_gap;
+        let spinbox_y = dropdown_y + dropdown_h + control_gap;
+        let preview_y = spinbox_y + spinbox_h + control_gap;
+        let alphabet_y = preview_y + preview_h + gap;
+        PreviewForm {
+            buttons_y,
+            dropdown_y,
+            dropdown_h,
+            spinbox_y,
+            spinbox_h,
+            preview_y,
+            preview_h,
+            alphabet_y,
+            alphabet_h,
+            content_h: alphabet_y + alphabet_h + pad,
+        }
     }
 
     /// The dissolved Plates' visual (blur off, non-draggable): config plate color else
@@ -344,9 +410,9 @@ impl TypefaceApp {
     }
 
     fn scroll_to_index(&mut self, index: usize) {
-        let item_height_full = 24.0 + 4.0; // legacy hardcoded item_height + item_gap
+        let item_height_full = LIST_ROW_H + list_row_gap();
         let top = index as f32 * item_height_full;
-        let bottom = top + 24.0;
+        let bottom = top + LIST_ROW_H;
         let viewport_top = self.list_region.scroll_y;
         let viewport_bottom = viewport_top + self.list_region.viewport_h;
 
@@ -398,17 +464,18 @@ impl TypefaceApp {
             }
         }
 
-        let (mid_panel_x, _, mid_panel_w, mid_panel_h) = self.mid_panel_rect();
-        let preview_box_x = mid_panel_x + 10.0;
-        let preview_box_w = mid_panel_w - 20.0;
+        let (mid_panel_x, panel_y, mid_panel_w, mid_panel_h) = self.mid_panel_rect();
+        let pad = cce_ui::layout::plate_padding();
+        let preview_box_x = mid_panel_x + pad;
+        let preview_box_w = mid_panel_w - 2.0 * pad;
 
-        let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
-        let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+        let form = self.preview_form();
+        let alphabet_box_h = form.alphabet_h;
         let scroll_y = self.mid_region.scroll_y;
-        let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
+        let alphabet_draw_y = panel_y + form.alphabet_y - scroll_y;
 
-        let viewport_top = 10.0;
-        let viewport_bottom = 10.0 + mid_panel_h;
+        let viewport_top = panel_y;
+        let viewport_bottom = panel_y + mid_panel_h;
         if alphabet_draw_y + alphabet_box_h < viewport_top || alphabet_draw_y > viewport_bottom {
             return;
         }
@@ -426,8 +493,8 @@ impl TypefaceApp {
         for (i, line) in lines.iter().enumerate() {
             pc.text_attrs(
                 *line,
-                mid_panel_x + 20.0,
-                alphabet_draw_y + 12.0 + i as f32 * size_used * 1.4,
+                preview_box_x + pad,
+                alphabet_draw_y + pad + i as f32 * size_used * 1.4,
                 size_used,
                 [0x88, 0x88, 0x99],
                 Some(family.clone()),
@@ -738,91 +805,94 @@ impl Application for TypefaceApp {
         let w_f32 = self.width as f32;
         let h_f32 = self.height as f32;
 
-        let left_panel_x = 10.0;
-        let left_panel_w = 270.0;
-        let mid_panel_x = left_panel_x + left_panel_w + 12.0;
-        let mid_panel_w = w_f32 - 10.0 - mid_panel_x;
+        // The ladder: the window edge to a pane is the root inset; the two
+        // panes (and the select bar below them) are siblings on the root plate,
+        // a root gap apart; inside a pane, content stands off the rim by the
+        // pane padding, and rows / grouped buttons sit a pane gap apart.
+        let inset = cce_ui::layout::root_plate_inset();
+        let pad = cce_ui::layout::plate_padding();
+        let gap = cce_ui::layout::plate_gap();
+        let row_gap = list_row_gap();
 
-        let select_bar_h = 48.0;
-        let content_h = if self.select_mode {
-            (h_f32 - 30.0 - select_bar_h).max(100.0)
-        } else {
-            (h_f32 - 20.0).max(100.0)
-        };
+        let panel_y = inset;
+        let left_panel_x = inset;
+        let left_panel_w = LEFT_PANEL_W;
+        let (mid_panel_x, _, mid_panel_w, _) = self.mid_panel_rect();
+
+        let select_bar_h = SELECT_BAR_H;
+        let content_h = self.content_h();
+        let bar_y = h_f32 - select_bar_h - inset;
 
         if self.needs_rebuild || size_changed {
             cce_ui::scale::set_scale_factor(scale as f32);
             self.register_widgets();
 
-            self.mid_region.set_rect(mid_panel_x, 10.0, mid_panel_w, content_h);
+            self.mid_region.set_rect(mid_panel_x, panel_y, mid_panel_w, content_h);
 
-            let mid_content_h = if self.select_mode { 440.0 } else { 520.0 };
-            self.mid_region.update_bounds_raw(mid_content_h, 10.0, content_h);
+            let form = self.preview_form();
+            self.mid_region.update_bounds_raw(form.content_h, panel_y, content_h);
 
-            let bar_y = h_f32 - select_bar_h - 10.0;
+            // Search box, inset from the pane's rim.
+            let search_h = 26.0;
+            self.search_box.set_rect(left_panel_x + pad, panel_y + pad, left_panel_w - 2.0 * pad, search_h);
 
-            // Search box
-            self.search_box.set_rect(left_panel_x + 10.0, 10.0, left_panel_w - 20.0, 26.0);
-
-            // Scrolling List
-            let list_x = left_panel_x + 10.0;
-            let list_y = 46.0;
-            let list_w = left_panel_w - 20.0;
-            let list_h = (content_h - 36.0).max(100.0);
+            // Scrolling list: a pane gap below the search box, down to the
+            // pane's padded bottom rim.
+            let list_x = left_panel_x + pad;
+            let list_y = panel_y + pad + search_h + gap;
+            let list_w = left_panel_w - 2.0 * pad;
+            let list_h = (panel_y + content_h - pad - list_y).max(100.0);
             self.list_region.set_rect(list_x, list_y, list_w, list_h);
-            // The dissolved List's content math: count * (adjusted item height + gap) + 4.
-            let item_full = self.list_item_h + 4.0;
-            self.list_region.update_bounds_raw(self.filtered.len() as f32 * item_full + 4.0, list_y, list_h);
+            // The dissolved List's content math: count * (adjusted item height + row gap) + row gap.
+            let item_full = self.list_item_h + row_gap;
+            self.list_region.update_bounds_raw(self.filtered.len() as f32 * item_full + row_gap, list_y, list_h);
 
-            // Layout list buttons
+            // Layout list buttons, inset from the list by its row gap.
             for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                let item_full = self.list_item_h + 4.0;
                 if let Some(draw_y) = self.list_region.get_draw_y(idx as f32 * item_full, self.list_item_h) {
-                    btn.set_rect(list_x + 4.0, draw_y, list_w - 8.0, 24.0);
+                    btn.set_rect(list_x + row_gap, draw_y, list_w - 2.0 * row_gap, LIST_ROW_H);
                 } else {
                     btn.set_rect(-9999.0, -9999.0, 0.0, 0.0);
                 }
             }
 
-            // Preview panel widgets layout
-            let style_dropdown_h = cce_ui::layout::dropdown_height() + self.style_dropdown.label_strip();
-            let size_spinbox_h = cce_ui::layout::spinbox_height() + self.size_spinbox.label_strip();
-            let preview_box_h = if self.select_mode { 120.0 } else { 180.0 };
-
+            // Preview panel widgets layout: the form's stack, scrolled.
             let scroll_y = self.mid_region.scroll_y;
-            let viewport_top = 10.0;
-            let viewport_bottom = 10.0 + content_h;
+            let viewport_top = panel_y;
+            let viewport_bottom = panel_y + content_h;
+            let control_x = mid_panel_x + pad;
+            let control_w = mid_panel_w - 2.0 * pad;
 
-            // Open Folder & Remove Font buttons (virtual_y = 20.0, h = 28.0)
-            let btn_draw_y = 10.0 + 20.0 - scroll_y;
+            // Open Folder & Remove Font buttons (h = 28.0), a pane gap apart.
+            let btn_draw_y = panel_y + form.buttons_y - scroll_y;
             if btn_draw_y + 28.0 >= viewport_top && btn_draw_y <= viewport_bottom {
-                self.btn_open_folder.set_rect(mid_panel_x + 10.0, btn_draw_y, 110.0, 28.0);
-                self.btn_remove_font.set_rect(mid_panel_x + 130.0, btn_draw_y, 110.0, 28.0);
+                self.btn_open_folder.set_rect(control_x, btn_draw_y, 110.0, 28.0);
+                self.btn_remove_font.set_rect(control_x + 110.0 + gap, btn_draw_y, 110.0, 28.0);
             } else {
                 self.btn_open_folder.set_rect(-9999.0, -9999.0, 0.0, 0.0);
                 self.btn_remove_font.set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
-            // Style dropdown (virtual_y = 65.0, h = style_dropdown_h)
-            let dropdown_draw_y = 10.0 + 65.0 - scroll_y;
-            if dropdown_draw_y + style_dropdown_h >= viewport_top && dropdown_draw_y <= viewport_bottom {
-                self.style_dropdown.set_rect(mid_panel_x + 10.0, dropdown_draw_y, mid_panel_w - 20.0, style_dropdown_h);
+            // Style dropdown
+            let dropdown_draw_y = panel_y + form.dropdown_y - scroll_y;
+            if dropdown_draw_y + form.dropdown_h >= viewport_top && dropdown_draw_y <= viewport_bottom {
+                self.style_dropdown.set_rect(control_x, dropdown_draw_y, control_w, form.dropdown_h);
             } else {
                 self.style_dropdown.set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
-            // Size spinbox (virtual_y = 120.0, h = size_spinbox_h)
-            let spinbox_draw_y = 10.0 + 120.0 - scroll_y;
-            if spinbox_draw_y + size_spinbox_h >= viewport_top && spinbox_draw_y <= viewport_bottom {
-                self.size_spinbox.set_rect(mid_panel_x + 10.0, spinbox_draw_y, mid_panel_w - 20.0, size_spinbox_h);
+            // Size spinbox
+            let spinbox_draw_y = panel_y + form.spinbox_y - scroll_y;
+            if spinbox_draw_y + form.spinbox_h >= viewport_top && spinbox_draw_y <= viewport_bottom {
+                self.size_spinbox.set_rect(control_x, spinbox_draw_y, control_w, form.spinbox_h);
             } else {
                 self.size_spinbox.set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
-            // Preview box (virtual_y = 190.0, h = preview_box_h)
-            let preview_draw_y = 10.0 + 190.0 - scroll_y;
-            if preview_draw_y + preview_box_h >= viewport_top && preview_draw_y <= viewport_bottom {
-                self.preview_box.set_rect(mid_panel_x + 10.0, preview_draw_y, mid_panel_w - 20.0, preview_box_h);
+            // Preview box
+            let preview_draw_y = panel_y + form.preview_y - scroll_y;
+            if preview_draw_y + form.preview_h >= viewport_top && preview_draw_y <= viewport_bottom {
+                self.preview_box.set_rect(control_x, preview_draw_y, control_w, form.preview_h);
             } else {
                 self.preview_box.set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
@@ -830,15 +900,16 @@ impl Application for TypefaceApp {
             if self.select_mode {
                 // The bottom bar's buttons, laid out directly (the layout Plate is
                 // DISSOLVED): text-sized via the widgets' intrinsic size, packed
-                // right with a 10px gap and inset, vertically centered — the old row style.
+                // right — the pane padding off the bar's rim, a pane gap apart —
+                // and vertically centered: the old row style.
                 let cancel_sz = self.select_cancel_btn.intrinsic_size()
                     .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
                 let confirm_sz = self.select_confirm_btn.intrinsic_size()
                     .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
-                let bar_w = w_f32 - 20.0;
-                let mut x = left_panel_x + bar_w - 10.0 - confirm_sz.width;
+                let bar_w = w_f32 - 2.0 * inset;
+                let mut x = left_panel_x + bar_w - pad - confirm_sz.width;
                 self.select_confirm_btn.set_rect(x, bar_y + (select_bar_h - confirm_sz.height) / 2.0, confirm_sz.width, confirm_sz.height);
-                x -= 10.0 + cancel_sz.width;
+                x -= gap + cancel_sz.width;
                 self.select_cancel_btn.set_rect(x, bar_y + (select_bar_h - cancel_sz.height) / 2.0, cancel_sz.width, cancel_sz.height);
             }
 
@@ -868,7 +939,7 @@ impl Application for TypefaceApp {
         {
             let self_ptr = self as *mut Self;
             // Left panel plate + children.
-            self.plate_prims(Rect { x: left_panel_x, y: 10.0, width: left_panel_w, height: content_h }, &mut pc);
+            self.plate_prims(Rect { x: left_panel_x, y: panel_y, width: left_panel_w, height: content_h }, &mut pc);
             unsafe {
                 cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).search_box, &mut pc);
                 emit_region_quads(&(*self_ptr).list_region, &mut pc);
@@ -887,7 +958,7 @@ impl Application for TypefaceApp {
                 pc.pop_clip();
             }
             // Mid panel plate + children (when a family is selected, like the old links).
-            self.plate_prims(Rect { x: mid_panel_x, y: 10.0, width: mid_panel_w, height: content_h }, &mut pc);
+            self.plate_prims(Rect { x: mid_panel_x, y: panel_y, width: mid_panel_w, height: content_h }, &mut pc);
             if self.selected_family.is_some() {
                 unsafe {
                     emit_region_quads(&(*self_ptr).mid_region, &mut pc);
@@ -900,8 +971,7 @@ impl Application for TypefaceApp {
             }
             // Bottom bar plate + children (select mode).
             if self.select_mode {
-                let bar_y = h_f32 - select_bar_h - 10.0;
-                self.plate_prims(Rect { x: left_panel_x, y: bar_y, width: w_f32 - 20.0, height: select_bar_h }, &mut pc);
+                self.plate_prims(Rect { x: left_panel_x, y: bar_y, width: w_f32 - 2.0 * inset, height: select_bar_h }, &mut pc);
                 unsafe {
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).select_cancel_btn, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).select_confirm_btn, &mut pc);
@@ -915,29 +985,28 @@ impl Application for TypefaceApp {
 
         // 3. Page Content Outline Borders
         // Left Panel Borders
-        quad(left_panel_x, 10.0, left_panel_w, 1.0, border_col, &mut pc);
-        quad(left_panel_x, 10.0 + content_h, left_panel_w, 1.0, border_col, &mut pc);
-        quad(left_panel_x, 10.0, 1.0, content_h, border_col, &mut pc);
-        quad(left_panel_x + left_panel_w, 10.0, 1.0, content_h, border_col, &mut pc);
+        quad(left_panel_x, panel_y, left_panel_w, 1.0, border_col, &mut pc);
+        quad(left_panel_x, panel_y + content_h, left_panel_w, 1.0, border_col, &mut pc);
+        quad(left_panel_x, panel_y, 1.0, content_h, border_col, &mut pc);
+        quad(left_panel_x + left_panel_w, panel_y, 1.0, content_h, border_col, &mut pc);
 
         // Middle Panel Borders
-        quad(mid_panel_x, 10.0, mid_panel_w, 1.0, border_col, &mut pc);
-        quad(mid_panel_x, 10.0 + content_h, mid_panel_w, 1.0, border_col, &mut pc);
-        quad(mid_panel_x, 10.0, 1.0, content_h, border_col, &mut pc);
-        quad(mid_panel_x + mid_panel_w, 10.0, 1.0, content_h, border_col, &mut pc);
+        quad(mid_panel_x, panel_y, mid_panel_w, 1.0, border_col, &mut pc);
+        quad(mid_panel_x, panel_y + content_h, mid_panel_w, 1.0, border_col, &mut pc);
+        quad(mid_panel_x, panel_y, 1.0, content_h, border_col, &mut pc);
+        quad(mid_panel_x + mid_panel_w, panel_y, 1.0, content_h, border_col, &mut pc);
 
         // The ScrollBox now automatically draws its own borders and scrollbar.
 
         // 4. Alphabet preview box + its text prims (family + style/weight attrs).
         if self.selected_family.is_some() {
-            let mid_panel_h = self.content_h();
-            let alphabet_virtual_y = if self.select_mode { 320.0 } else { 380.0 };
-            let alphabet_box_h = if self.select_mode { 102.0 } else { 120.0 };
+            let form = self.preview_form();
+            let alphabet_box_h = form.alphabet_h;
             let scroll_y = self.mid_region.scroll_y;
-            let alphabet_draw_y = 10.0 + alphabet_virtual_y - scroll_y;
+            let alphabet_draw_y = panel_y + form.alphabet_y - scroll_y;
 
-            let viewport_top = 10.0;
-            let viewport_bottom = 10.0 + mid_panel_h;
+            let viewport_top = panel_y;
+            let viewport_bottom = panel_y + content_h;
 
             if alphabet_draw_y + alphabet_box_h >= viewport_top && alphabet_draw_y <= viewport_bottom {
                 let draw_y_start = alphabet_draw_y.max(viewport_top);
@@ -945,8 +1014,8 @@ impl Application for TypefaceApp {
                 let draw_h = draw_y_end - draw_y_start;
 
                 if draw_h > 0.0 {
-                    let preview_box_x = mid_panel_x + 10.0;
-                    let preview_box_w = mid_panel_w - 20.0;
+                    let preview_box_x = mid_panel_x + pad;
+                    let preview_box_w = mid_panel_w - 2.0 * pad;
                     let alphabet_bg = [
                         base_low[0] * 0.9,
                         base_low[1] * 0.9,
@@ -985,19 +1054,22 @@ impl Application for TypefaceApp {
         }
 
         if self.select_mode {
-            let bar_y = h_f32 - select_bar_h - 10.0;
             // Draw bottom bar separator, side borders, and bottom border
-            quad(left_panel_x, bar_y, w_f32 - 20.0, 1.0, border_col, &mut pc);
+            quad(left_panel_x, bar_y, w_f32 - 2.0 * inset, 1.0, border_col, &mut pc);
             quad(left_panel_x, bar_y, 1.0, select_bar_h, border_col, &mut pc);
-            quad(w_f32 - 10.0, bar_y, 1.0, select_bar_h, border_col, &mut pc);
-            quad(left_panel_x, bar_y + select_bar_h, w_f32 - 20.0, 1.0, border_col, &mut pc);
+            quad(w_f32 - inset, bar_y, 1.0, select_bar_h, border_col, &mut pc);
+            quad(left_panel_x, bar_y + select_bar_h, w_f32 - 2.0 * inset, 1.0, border_col, &mut pc);
 
-            // Selected-font readout in the bottom bar
+            // Selected-font readout in the bottom bar: the pane padding off
+            // its rim, the 12px text centered in the bar's height, the name
+            // in a 100px column after the label.
+            let readout_size = 12.0;
+            let readout_y = bar_y + (select_bar_h - readout_size) / 2.0;
             pc.text_with(
                 "Selected Font:",
-                left_panel_x + 10.0,
-                bar_y + 18.0,
-                12.0,
+                left_panel_x + pad,
+                readout_y,
+                readout_size,
                 [0x5c, 0x90, 0x60],
                 Some("monospace".to_string()),
                 None,
@@ -1005,9 +1077,9 @@ impl Application for TypefaceApp {
             let font_name = self.selected_family.clone().unwrap_or_else(|| "None".to_string());
             pc.text_with(
                 font_name,
-                left_panel_x + 110.0,
-                bar_y + 18.0,
-                12.0,
+                left_panel_x + pad + 100.0,
+                readout_y,
+                readout_size,
                 [0xdd, 0xdd, 0xe2],
                 Some("monospace".to_string()),
                 None,
