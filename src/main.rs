@@ -224,7 +224,7 @@ impl TypefaceApp {
         let preview_h = if self.select_mode { 120.0 } else { 180.0 };
         let alphabet_h = if self.select_mode { 102.0 } else { 120.0 };
         let buttons_y = pad;
-        let dropdown_y = buttons_y + 28.0 + control_gap;
+        let dropdown_y = buttons_y + cce_ui::layout::button_height() + control_gap;
         let spinbox_y = dropdown_y + dropdown_h + control_gap;
         let preview_y = spinbox_y + spinbox_h + control_gap;
         let alphabet_y = preview_y + preview_h + gap;
@@ -546,11 +546,12 @@ impl Application for TypefaceApp {
         let mut preview_box = TextBox::new(String::from("The quick brown fox jumps over the lazy dog")).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
         preview_box.font_size = 32.0;
 
-        let btn_open_folder = Button::new(914.0, 200.0, 110.0, 28.0).with_label("Open Folder");
-        let btn_remove_font = Button::new_reset(1034.0, 200.0, 110.0, 28.0).with_label("Remove Font");
+        let btn_h = cce_ui::layout::button_height();
+        let btn_open_folder = Button::new(914.0, 200.0, 110.0, btn_h).with_label("Open Folder");
+        let btn_remove_font = Button::new_reset(1034.0, 200.0, 110.0, btn_h).with_label("Remove Font");
 
-        let select_cancel_btn = Button::new_reset(0.0, 0.0, 80.0, 28.0).with_label("Cancel");
-        let select_confirm_btn = Button::new(0.0, 0.0, 80.0, 28.0).with_label("Select");
+        let select_cancel_btn = Button::new_reset(0.0, 0.0, 80.0, btn_h).with_label("Cancel");
+        let select_confirm_btn = Button::new(0.0, 0.0, 80.0, btn_h).with_label("Select");
 
         let all_fonts = pages::fetch_fonts();
         let mut app = Self {
@@ -823,7 +824,7 @@ impl Application for TypefaceApp {
             self.mid_region.update_bounds_raw(form.content_h, panel_y, content_h);
 
             // Search box, inset from the pane's rim.
-            let search_h = 26.0;
+            let search_h = cce_ui::layout::textbox_height();
             self.search_box.set_rect(left_panel_x + pad, panel_y + pad, left_panel_w - 2.0 * pad, search_h);
 
             // Scrolling list: a pane gap below the search box, down to the
@@ -853,11 +854,12 @@ impl Application for TypefaceApp {
             let control_x = mid_panel_x + pad;
             let control_w = mid_panel_w - 2.0 * pad;
 
-            // Open Folder & Remove Font buttons (h = 28.0), a pane gap apart.
+            // Open Folder & Remove Font buttons, a pane gap apart.
+            let btn_h = cce_ui::layout::button_height();
             let btn_draw_y = panel_y + form.buttons_y - scroll_y;
-            if btn_draw_y + 28.0 >= viewport_top && btn_draw_y <= viewport_bottom {
-                self.btn_open_folder.set_rect(control_x, btn_draw_y, 110.0, 28.0);
-                self.btn_remove_font.set_rect(control_x + 110.0 + gap, btn_draw_y, 110.0, 28.0);
+            if btn_draw_y + btn_h >= viewport_top && btn_draw_y <= viewport_bottom {
+                self.btn_open_folder.set_rect(control_x, btn_draw_y, 110.0, btn_h);
+                self.btn_remove_font.set_rect(control_x + 110.0 + gap, btn_draw_y, 110.0, btn_h);
             } else {
                 self.btn_open_folder.set_rect(-9999.0, -9999.0, 0.0, 0.0);
                 self.btn_remove_font.set_rect(-9999.0, -9999.0, 0.0, 0.0);
@@ -892,10 +894,11 @@ impl Application for TypefaceApp {
                 // DISSOLVED): text-sized via the widgets' intrinsic size, packed
                 // right — the pane padding off the bar's rim, a pane gap apart —
                 // and vertically centered: the old row style.
+                let btn_h = cce_ui::layout::button_height();
                 let cancel_sz = self.select_cancel_btn.intrinsic_size()
-                    .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
+                    .unwrap_or(cce_ui::scene::layout::Size::new(80.0, btn_h));
                 let confirm_sz = self.select_confirm_btn.intrinsic_size()
-                    .unwrap_or(cce_ui::scene::layout::Size::new(80.0, 28.0));
+                    .unwrap_or(cce_ui::scene::layout::Size::new(80.0, btn_h));
                 let bar_w = w_f32 - 2.0 * inset;
                 let mut x = left_panel_x + bar_w - pad - confirm_sz.width;
                 self.select_confirm_btn.set_rect(x, bar_y + (select_bar_h - confirm_sz.height) / 2.0, confirm_sz.width, confirm_sz.height);
