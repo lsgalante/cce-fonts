@@ -1409,8 +1409,5 @@ impl Application for TypefaceApp {
 }
 
 fn main() {
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let _guard = rt.enter();
-    
     cce_ui::engine::run::<TypefaceApp>();
 }
