@@ -289,23 +289,20 @@ impl TypefaceApp {
     /// once; the font-list buttons every rebuild (they are recreated on search changes,
     /// same cadence the old per-rebuild link_parent_child re-registration had).
     fn register_widgets(&mut self) {
-        let self_ptr = self as *mut Self;
-        unsafe {
-            if !self.widgets_registered {
-                self.widgets_registered = true;
-                self.ui_context.register_widget(self.search_box.base().id(), (*self_ptr).search_box.as_ptr_mut());
-                self.ui_context.register_widget(self.btn_open_folder.base().id(), (*self_ptr).btn_open_folder.as_ptr_mut());
-                self.ui_context.register_widget(self.btn_remove_font.base().id(), (*self_ptr).btn_remove_font.as_ptr_mut());
-                self.ui_context.register_widget(self.style_dropdown.base().id(), (*self_ptr).style_dropdown.as_ptr_mut());
-                self.ui_context.register_widget(self.size_spinbox.base().id(), (*self_ptr).size_spinbox.as_ptr_mut());
-                self.ui_context.register_widget(self.preview_box.base().id(), (*self_ptr).preview_box.as_ptr_mut());
-                self.ui_context.register_widget(self.select_cancel_btn.base().id(), (*self_ptr).select_cancel_btn.as_ptr_mut());
-                self.ui_context.register_widget(self.select_confirm_btn.base().id(), (*self_ptr).select_confirm_btn.as_ptr_mut());
-            }
-            for btn in (*self_ptr).font_buttons.iter_mut() {
-                if btn.rect().0 > -9000.0 {
-                    self.ui_context.register_widget(btn.base().id(), btn.as_ptr_mut());
-                }
+        if !self.widgets_registered {
+            self.widgets_registered = true;
+            self.ui_context.register_host(&mut self.search_box);
+            self.ui_context.register_host(&mut self.btn_open_folder);
+            self.ui_context.register_host(&mut self.btn_remove_font);
+            self.ui_context.register_host(&mut self.style_dropdown);
+            self.ui_context.register_host(&mut self.size_spinbox);
+            self.ui_context.register_host(&mut self.preview_box);
+            self.ui_context.register_host(&mut self.select_cancel_btn);
+            self.ui_context.register_host(&mut self.select_confirm_btn);
+        }
+        for btn in self.font_buttons.iter_mut() {
+            if btn.rect().0 > -9000.0 {
+                self.ui_context.register_host(btn);
             }
         }
     }
@@ -415,8 +412,7 @@ impl TypefaceApp {
         // immediately — but `register_widgets()` only runs in the next layout pass, so the
         // ids were reported unregistered until then and the router dropped those events.
         for btn in self.font_buttons.iter_mut() {
-            let (id, ptr) = (btn.id(), btn.as_ptr_mut());
-            self.ui_context.register_widget(id, ptr);
+            self.ui_context.register_host(btn);
         }
 
         if let Some(sel) = self.selected_idx {
@@ -856,8 +852,7 @@ impl Application for TypefaceApp {
                 // Register the replacements now rather than waiting for the next layout pass —
                 // see refresh(). This is the path that produced the stale-root spam.
                 for btn in self.font_buttons.iter_mut() {
-                    let (id, ptr) = (btn.id(), btn.as_ptr_mut());
-                    self.ui_context.register_widget(id, ptr);
+                    self.ui_context.register_host(btn);
                 }
 
                 // reset or re-evaluate selection
