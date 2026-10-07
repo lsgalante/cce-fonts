@@ -64,22 +64,13 @@ enum AppMessage {
     RefreshFonts,
 }
 
-/// The region's flat bg fill (the toolkit `ScrollRegion::push_prims` draws a
-/// bordered frame, which this app's panels never had), with the scrollbar's
-/// idle copy UNDER it: the regions are sink-behind, so the bar rides the
-/// region's centre line and idles behind this translucent fill, every frame.
-/// Its fore copy is emitted after the rows, by [`emit_region_bar`].
-/// `radius` rounds the fill to match a plate the region exactly covers
-/// (0 for a region inset inside its plate).
-fn emit_region_quads(r: &ScrollRegion, radius: f32, pc: &mut cce_ui::scene::paint::PaintCtx) {
-    use cce_ui::scene::layout::Rect;
+/// The scrollbar's idle copy: the regions are sink-behind, so the bar rides
+/// the region's centre line and idles behind the panel plate, every frame —
+/// emitted BEFORE that plate. (No bg fill of its own: the region shows the
+/// plate it sits on.) Its fore copy is emitted after the rows, by
+/// [`emit_region_bar`].
+fn emit_region_idle_bar(r: &ScrollRegion, pc: &mut cce_ui::scene::paint::PaintCtx) {
     r.push_scrollbar_prims(pc);
-    let rect = Rect { x: r.x, y: r.y, width: r.w, height: r.h };
-    if radius > 0.1 {
-        pc.rounded_rect(rect, radius, (true, true, true, true), cce_ui::color::list_bg_color());
-    } else {
-        pc.quad(rect, cce_ui::color::list_bg_color());
-    }
 }
 
 /// The scrollbar's fore copy, at the raise's fade (nothing while sunk):
@@ -249,22 +240,13 @@ impl TypefaceApp {
         }
     }
 
-    /// The dissolved Plates' visual (blur off, non-draggable): config plate color else
-    /// page-low, at plate opacity, with the config border and corner radius.
+    /// The dissolved Plates' visual: a pane plate made of the root plate's own
+    /// material (`Material::root()`), so a panel inherits the window base's colour
+    /// rather than wearing a tint of its own, set off by the DE roll.
     fn plate_prims(&self, rect: cce_ui::scene::layout::Rect, pc: &mut cce_ui::scene::paint::PaintCtx) {
-        let mut fill = cce_ui::colors::plate_color().unwrap_or_else(cce_ui::colors::page_low_color);
-        fill[3] *= cce_ui::layout::plate_opacity();
         let radius = cce_ui::layout::plate_corner_radius();
-        let radii = (radius, radius, radius, radius);
-        if let Some(bc) = cce_ui::colors::plate_border_color() {
-            pc.border(rect, radii, fill, bc, cce_ui::colors::plate_border_thickness());
-        } else if fill[3].abs() > 0.001 {
-            if radius > 0.1 {
-                pc.rounded_rect(rect, radius, (true, true, true, true), fill);
-            } else {
-                pc.quad(rect, fill);
-            }
-        }
+        let depth = cce_ui::layout::bevel_width().min(rect.height * 0.2);
+        pc.plate(rect, (radius, radius, radius, radius), &cce_ui::scene::Material::root(), depth);
     }
 
     /// Event dispatch order of the dissolved panels: the flat child list, panel-grouped
@@ -927,9 +909,6 @@ impl Application for TypefaceApp {
             self.ui_context.register_popover(&mut self.style_dropdown);
         }
 
-        let base_low = cce_ui::colors::page_low_color();
-        let border_col = cce_ui::colors::color_borders_color();
-
         // 1. The window base, then the dissolved panels' plates and their children
         // walked in the legacy panel order.
         use cce_ui::scene::layout::Rect;
@@ -938,11 +917,11 @@ impl Application for TypefaceApp {
         pc.root_plate(w_f32, h_f32);
         {
             let self_ptr = self as *mut Self;
-            // Left panel plate + children.
+            // Left panel plate + children (the list's idle scrollbar under the plate).
+            emit_region_idle_bar(&self.list_region, &mut pc);
             self.plate_prims(Rect { x: left_panel_x, y: panel_y, width: left_panel_w, height: content_h }, &mut pc);
             unsafe {
                 cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).search_box, &mut pc);
-                emit_region_quads(&(*self_ptr).list_region, 0.0, &mut pc);
                 // Rows under the list-viewport clip: `get_draw_y` returns
                 // PARTIALLY visible rows (toolkit ScrollRegion intersection
                 // contract), so an edge row renders cut instead of vanishing.
@@ -958,11 +937,12 @@ impl Application for TypefaceApp {
                 pc.pop_clip();
             }
             // Mid panel plate + children (when a family is selected, like the old links).
+            if self.selected_family.is_some() {
+                emit_region_idle_bar(&self.mid_region, &mut pc);
+            }
             self.plate_prims(Rect { x: mid_panel_x, y: panel_y, width: mid_panel_w, height: content_h }, &mut pc);
             if self.selected_family.is_some() {
                 unsafe {
-                    // The mid region spans its whole plate, so its fill takes the plate's corners.
-                    emit_region_quads(&(*self_ptr).mid_region, cce_ui::layout::plate_corner_radius(), &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_open_folder, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_remove_font, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).style_dropdown, &mut pc);
@@ -980,59 +960,14 @@ impl Application for TypefaceApp {
             }
         }
 
-        let quad = |x: f32, y: f32, w: f32, h: f32, c: [f32; 4], pc: &mut cce_ui::scene::paint::PaintCtx| {
-            pc.quad(Rect { x, y, width: w, height: h }, c);
-        };
-
-        // 4. Alphabet preview box + its text prims (family + style/weight attrs).
+        // 4. Alphabet preview text prims (family + style/weight attrs), straight on the
+        // mid plate: no box fill or outline of its own, so it wears the plate's colour.
         if self.selected_family.is_some() {
-            let form = self.preview_form();
-            let alphabet_box_h = form.alphabet_h;
-            let scroll_y = self.mid_region.scroll_y;
-            let alphabet_draw_y = panel_y + form.alphabet_y - scroll_y;
-
-            let viewport_top = panel_y;
-            let viewport_bottom = panel_y + content_h;
-
-            if alphabet_draw_y + alphabet_box_h >= viewport_top && alphabet_draw_y <= viewport_bottom {
-                let draw_y_start = alphabet_draw_y.max(viewport_top);
-                let draw_y_end = (alphabet_draw_y + alphabet_box_h).min(viewport_bottom);
-                let draw_h = draw_y_end - draw_y_start;
-
-                if draw_h > 0.0 {
-                    let preview_box_x = mid_panel_x + pad;
-                    let preview_box_w = mid_panel_w - 2.0 * pad;
-                    let alphabet_bg = [
-                        base_low[0] * 0.9,
-                        base_low[1] * 0.9,
-                        base_low[2] * 0.9,
-                        1.0,
-                    ];
-                    let alphabet_border = [
-                        border_col[0] * 0.85,
-                        border_col[1] * 0.85,
-                        border_col[2] * 0.85,
-                        1.0,
-                    ];
-
-                    quad(preview_box_x, draw_y_start, preview_box_w, draw_h, alphabet_bg, &mut pc); // alphabet box bg
-
-                    if alphabet_draw_y >= viewport_top {
-                        quad(preview_box_x, alphabet_draw_y, preview_box_w, 1.0, alphabet_border, &mut pc); // Top border
-                    }
-                    if alphabet_draw_y + alphabet_box_h <= viewport_bottom {
-                        quad(preview_box_x, alphabet_draw_y + alphabet_box_h, preview_box_w, 1.0, alphabet_border, &mut pc); // Bottom border
-                    }
-                    quad(preview_box_x, draw_y_start, 1.0, draw_h, alphabet_border, &mut pc); // Left border
-                    quad(preview_box_x + preview_box_w, draw_y_start, 1.0, draw_h, alphabet_border, &mut pc); // Right border
-                }
-            }
-
             self.push_alphabet_preview(&mut pc);
         }
 
         // The scrollbars' fore copies ride over the panel content (the idle
-        // copies went under the region bg fills inside emit_region_quads);
+        // copies went under the panel plates);
         // the style dropdown's popover still stacks above them.
         emit_region_bar(&self.list_region, &mut pc);
         if self.selected_family.is_some() {
