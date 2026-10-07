@@ -976,21 +976,6 @@ impl Application for TypefaceApp {
             pc.quad(Rect { x, y, width: w, height: h }, c);
         };
 
-        // 3. Page Content Outline Borders
-        // Left Panel Borders
-        quad(left_panel_x, panel_y, left_panel_w, 1.0, border_col, &mut pc);
-        quad(left_panel_x, panel_y + content_h, left_panel_w, 1.0, border_col, &mut pc);
-        quad(left_panel_x, panel_y, 1.0, content_h, border_col, &mut pc);
-        quad(left_panel_x + left_panel_w, panel_y, 1.0, content_h, border_col, &mut pc);
-
-        // Middle Panel Borders
-        quad(mid_panel_x, panel_y, mid_panel_w, 1.0, border_col, &mut pc);
-        quad(mid_panel_x, panel_y + content_h, mid_panel_w, 1.0, border_col, &mut pc);
-        quad(mid_panel_x, panel_y, 1.0, content_h, border_col, &mut pc);
-        quad(mid_panel_x + mid_panel_w, panel_y, 1.0, content_h, border_col, &mut pc);
-
-        // The ScrollBox now automatically draws its own borders and scrollbar.
-
         // 4. Alphabet preview box + its text prims (family + style/weight attrs).
         if self.selected_family.is_some() {
             let form = self.preview_form();
@@ -1047,12 +1032,6 @@ impl Application for TypefaceApp {
         }
 
         if self.select_mode {
-            // Draw bottom bar separator, side borders, and bottom border
-            quad(left_panel_x, bar_y, w_f32 - 2.0 * inset, 1.0, border_col, &mut pc);
-            quad(left_panel_x, bar_y, 1.0, select_bar_h, border_col, &mut pc);
-            quad(w_f32 - inset, bar_y, 1.0, select_bar_h, border_col, &mut pc);
-            quad(left_panel_x, bar_y + select_bar_h, w_f32 - 2.0 * inset, 1.0, border_col, &mut pc);
-
             // Selected-font readout in the bottom bar: the pane padding off
             // its rim, the 12px text centered in the bar's height, the name
             // in a 100px column after the label.
