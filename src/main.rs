@@ -69,10 +69,17 @@ enum AppMessage {
 /// idle copy UNDER it: the regions are sink-behind, so the bar rides the
 /// region's centre line and idles behind this translucent fill, every frame.
 /// Its fore copy is emitted after the rows, by [`emit_region_bar`].
-fn emit_region_quads(r: &ScrollRegion, pc: &mut cce_ui::scene::paint::PaintCtx) {
+/// `radius` rounds the fill to match a plate the region exactly covers
+/// (0 for a region inset inside its plate).
+fn emit_region_quads(r: &ScrollRegion, radius: f32, pc: &mut cce_ui::scene::paint::PaintCtx) {
     use cce_ui::scene::layout::Rect;
     r.push_scrollbar_prims(pc);
-    pc.quad(Rect { x: r.x, y: r.y, width: r.w, height: r.h }, cce_ui::color::list_bg_color());
+    let rect = Rect { x: r.x, y: r.y, width: r.w, height: r.h };
+    if radius > 0.1 {
+        pc.rounded_rect(rect, radius, (true, true, true, true), cce_ui::color::list_bg_color());
+    } else {
+        pc.quad(rect, cce_ui::color::list_bg_color());
+    }
 }
 
 /// The scrollbar's fore copy, at the raise's fade (nothing while sunk):
@@ -935,7 +942,7 @@ impl Application for TypefaceApp {
             self.plate_prims(Rect { x: left_panel_x, y: panel_y, width: left_panel_w, height: content_h }, &mut pc);
             unsafe {
                 cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).search_box, &mut pc);
-                emit_region_quads(&(*self_ptr).list_region, &mut pc);
+                emit_region_quads(&(*self_ptr).list_region, 0.0, &mut pc);
                 // Rows under the list-viewport clip: `get_draw_y` returns
                 // PARTIALLY visible rows (toolkit ScrollRegion intersection
                 // contract), so an edge row renders cut instead of vanishing.
@@ -954,7 +961,8 @@ impl Application for TypefaceApp {
             self.plate_prims(Rect { x: mid_panel_x, y: panel_y, width: mid_panel_w, height: content_h }, &mut pc);
             if self.selected_family.is_some() {
                 unsafe {
-                    emit_region_quads(&(*self_ptr).mid_region, &mut pc);
+                    // The mid region spans its whole plate, so its fill takes the plate's corners.
+                    emit_region_quads(&(*self_ptr).mid_region, cce_ui::layout::plate_corner_radius(), &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_open_folder, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_remove_font, &mut pc);
                     cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).style_dropdown, &mut pc);
