@@ -1183,6 +1183,16 @@ impl Application for TypefaceApp {
         let px = pos.x as f32;
         let py = pos.y as f32;
 
+        // The shared context menu gets the pointer to itself while open (its
+        // row highlight), as it gets the clicks (`handle_mouse_input`).
+        if cce_ui::widget::context_menu::is_visible() {
+            if cce_ui::widget::context_menu::cursor_moved(px, py) {
+                *needs_rebuild = true;
+                self.needs_rebuild = true;
+            }
+            return;
+        }
+
         let old_size = self.preview_box.font_size;
 
         // The dissolved scroll regions: scrollbar-thumb drags and hover tracking.
@@ -1221,6 +1231,24 @@ impl Application for TypefaceApp {
         let mut msg_out = None;
         let px = pos.x as f32;
         let py = pos.y as f32;
+
+        // The toolkit's shared context menu (the size spinbox's, the text boxes')
+        // takes every click while it is open: a row runs its action, a press
+        // anywhere else dismisses it. The toolkit leaves this routing to the app,
+        // and without it the menu could not be closed by clicking outside it.
+        if cce_ui::widget::context_menu::is_visible() {
+            if cce_ui::widget::context_menu::mouse_input(button, state, px, py, Some(&mut self.ui_context)) {
+                *needs_rebuild = true;
+                self.needs_rebuild = true;
+            }
+            // A size pasted into the spinbox from the menu.
+            let new_size = self.size_spinbox.value as f32;
+            if (new_size - self.preview_box.font_size).abs() > 0.001 {
+                self.preview_box.font_size = new_size;
+                return Some(AppMessage::FontSizeChanged);
+            }
+            return None;
+        }
 
         if state == ElementState::Pressed && button == MouseButton::Left {
             if !self.search_box.hit_test(px, py, &self.ui_context) {
