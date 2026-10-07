@@ -141,6 +141,10 @@ struct TypefaceApp {
     selected_file: Option<String>,
     family_styles: Vec<String>,
     family_files: Vec<String>,
+    family_indices: Vec<u32>,
+    /// The selected face's own italic / weight (see `face_attrs`): the preview
+    /// box and the alphabet are shaped with it.
+    selected_attrs: cce_ui::scene::paint::TextAttrs,
     charset_count: usize,
     charset_str: String,
     is_user_font: bool,
@@ -307,6 +311,8 @@ impl TypefaceApp {
                 self.selected_file = None;
                 self.family_styles.clear();
                 self.family_files.clear();
+                self.family_indices.clear();
+                self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
                 self.style_dropdown.options.clear();
                 self.style_dropdown.selected = 0;
                 self.charset_count = 0;
@@ -342,42 +348,27 @@ impl TypefaceApp {
 
     fn select_family(&mut self, family: String) {
         self.selected_family = Some(family.clone());
-        self.preview_box.font_family = family.clone();
-        
-        // Find styles and files
+
         let entries: Vec<&pages::FontEntry> = self.all_fonts.iter().filter(|f| f.family == family).collect();
-        
-        let mut styles = Vec::new();
-        let mut files = Vec::new();
-        for e in entries {
-            styles.push(e.style.clone());
-            files.push(e.file.clone());
-        }
-        
-        self.family_styles = styles.clone();
-        self.family_files = files.clone();
-        
+        self.family_styles = entries.iter().map(|e| e.style.clone()).collect();
+        self.family_files = entries.iter().map(|e| e.file.clone()).collect();
+        self.family_indices = entries.iter().map(|e| e.index).collect();
+
         // Pick default style: "Regular" if available, else first
-        let default_idx = styles.iter().position(|s| s == "Regular").unwrap_or(0);
-        
-        self.style_dropdown.options = styles;
+        let default_idx = self.family_styles.iter().position(|s| s == "Regular").unwrap_or(0);
+        self.style_dropdown.options = self.family_styles.clone();
         self.style_dropdown.selected = default_idx;
-        
-        if !self.family_styles.is_empty() {
-            let style = self.family_styles[default_idx].clone();
-            let file = self.family_files[default_idx].clone();
-            self.selected_style = Some(style);
-            self.selected_file = Some(file.clone());
-            
-            self.charset_count = pages::count_chars(&file);
-            self.charset_str = self.charset_count.to_string();
-            self.is_user_font = pages::is_user_font(&file);
-        } else {
+
+        if self.family_styles.is_empty() {
             self.selected_style = None;
             self.selected_file = None;
+            self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
             self.charset_count = 0;
             self.charset_str = String::from("0");
             self.is_user_font = false;
+            self.sync_preview_font();
+        } else {
+            self.select_style(default_idx);
         }
 
         // Highlight selected button
@@ -388,6 +379,52 @@ impl TypefaceApp {
         }
         
         self.needs_rebuild = true;
+    }
+
+    /// Make the family's `idx`th style the shown face: its file's charset and
+    /// home, and the attrs the preview text is shaped with.
+    fn select_style(&mut self, idx: usize) {
+        let style = self.family_styles[idx].clone();
+        let file = self.family_files[idx].clone();
+        self.style_dropdown.selected = idx;
+        self.selected_style = Some(style);
+        self.selected_attrs = self.face_attrs(&file, self.family_indices[idx]);
+        self.charset_count = pages::count_chars(&file);
+        self.charset_str = self.charset_count.to_string();
+        self.is_user_font = pages::is_user_font(&file);
+        self.selected_file = Some(file);
+        self.sync_preview_font();
+    }
+
+    /// The italic / weight that select exactly the face at `file`#`index`, as
+    /// fontdb read them from the font itself. cosmic-text takes a family's face
+    /// only at its exact weight (and style), so the style NAME is no guide:
+    /// Circe Slab's Light is weight 350, Bodoni Egyptian Mono Thin 280, Roboto's
+    /// Thin 250, and a guessed 300 or 400 matched none of them. (A cut that
+    /// differs only in width, Circe Slab A Narrow, cannot be told apart this
+    /// way: `TextAttrs` carries no stretch, so it previews as its normal-width
+    /// sibling at the same weight.)
+    fn face_attrs(&self, file: &str, index: u32) -> cce_ui::scene::paint::TextAttrs {
+        use cce_ui::cosmic_text::fontdb::{Source, Style};
+        let face = self.font_system.db().faces().find(|f| {
+            f.index == index
+                && matches!(&f.source, Source::File(p) | Source::SharedFile(p, _) if p.as_os_str() == file)
+        });
+        match face {
+            Some(f) => cce_ui::scene::paint::TextAttrs { italic: f.style != Style::Normal, weight: Some(f.weight.0) },
+            None => cce_ui::scene::paint::TextAttrs::default(),
+        }
+    }
+
+    /// Point the preview box at the selected face. The family goes in WITH the
+    /// size, as a "family size" font string: a bare family whose name ends in a
+    /// number ("Noto Sans Symbols 2") would otherwise have that number read as
+    /// its size by the toolkit's font-string split.
+    fn sync_preview_font(&mut self) {
+        if let Some(ref family) = self.selected_family {
+            self.preview_box.font_family = format!("{} {}", family, self.preview_box.font_size);
+        }
+        self.preview_box.font_attrs = self.selected_attrs;
     }
 
     fn scroll_to_index(&mut self, index: usize) {
@@ -430,20 +467,7 @@ impl TypefaceApp {
         let Some(ref family) = self.selected_family else { return };
 
         let font_size = self.size_spinbox.value as f32;
-        let mut attrs = cce_ui::scene::paint::TextAttrs::default();
-        if let Some(ref style) = self.selected_style {
-            let sl = style.to_lowercase();
-            if sl.contains("italic") || sl.contains("oblique") {
-                attrs.italic = true;
-            }
-            if sl.contains("bold") {
-                attrs.weight = Some(700);
-            } else if sl.contains("light") {
-                attrs.weight = Some(300);
-            } else if sl.contains("medium") {
-                attrs.weight = Some(500);
-            }
-        }
+        let attrs = self.selected_attrs;
 
         let (mid_panel_x, panel_y, mid_panel_w, mid_panel_h) = self.mid_panel_rect();
         let pad = cce_ui::layout::plate_padding();
@@ -478,7 +502,9 @@ impl TypefaceApp {
                 alphabet_draw_y + pad + i as f32 * size_used * 1.4,
                 size_used,
                 [0x88, 0x88, 0x99],
-                Some(family.clone()),
+                // With the size, like `sync_preview_font`, so a trailing number in the
+                // family name stays part of it.
+                Some(format!("{family} {size_used}")),
                 bounds,
                 attrs,
             );
@@ -569,6 +595,8 @@ impl Application for TypefaceApp {
             selected_file: None,
             family_styles: Vec::new(),
             family_files: Vec::new(),
+            family_indices: Vec::new(),
+            selected_attrs: cce_ui::scene::paint::TextAttrs::default(),
             charset_count: 0,
             charset_str: String::from("0"),
             is_user_font: false,
@@ -618,6 +646,7 @@ impl Application for TypefaceApp {
                 app.size_spinbox.edit_buffer = app.size_spinbox.value.to_string();
             }
             app.preview_box.font_size = sz;
+            app.sync_preview_font();
         }
 
         app
@@ -662,20 +691,14 @@ impl Application for TypefaceApp {
             }
             AppMessage::SelectStyle(idx) => {
                 if idx < self.family_styles.len() {
-                    self.style_dropdown.selected = idx;
-                    let style = self.family_styles[idx].clone();
-                    let file = self.family_files[idx].clone();
-                    self.selected_style = Some(style);
-                    self.selected_file = Some(file.clone());
-                    self.charset_count = pages::count_chars(&file);
-                    self.charset_str = self.charset_count.to_string();
-                    self.is_user_font = pages::is_user_font(&file);
+                    self.select_style(idx);
                     *needs_rebuild = true;
                     self.needs_rebuild = true;
                 }
             }
             AppMessage::FontSizeChanged => {
                 self.preview_box.font_size = self.size_spinbox.value as f32;
+                self.sync_preview_font();
                 *needs_rebuild = true;
                 self.needs_rebuild = true;
             }
@@ -704,6 +727,8 @@ impl Application for TypefaceApp {
                 self.selected_file = None;
                 self.family_styles.clear();
                 self.family_files.clear();
+                self.family_indices.clear();
+                self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
                 self.style_dropdown.options.clear();
                 self.style_dropdown.selected = 0;
                 self.charset_count = 0;

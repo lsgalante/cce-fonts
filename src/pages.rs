@@ -5,11 +5,13 @@ pub struct FontEntry {
     pub family: String,
     pub style: String,
     pub file: String,
+    /// The face's index within `file` (non-zero only in a .ttc collection).
+    pub index: u32,
 }
 
 pub fn fetch_fonts() -> Vec<FontEntry> {
     let output = match Command::new("fc-list")
-        .arg("--format=%{family}\\t%{style}\\t%{file}\\n")
+        .arg("--format=%{family}\\t%{style}\\t%{index}\\t%{file}\\n")
         .output()
     {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -19,14 +21,15 @@ pub fn fetch_fonts() -> Vec<FontEntry> {
     let mut fonts: Vec<FontEntry> = output
         .lines()
         .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(3, '\t').collect();
-            if parts.len() == 3 {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() == 4 {
                 let family = parts[0].split(',').next().unwrap_or(parts[0]).trim().to_string();
                 let style = parts[1].split(',').next().unwrap_or(parts[1]).trim().to_string();
                 Some(FontEntry {
                     family,
                     style,
-                    file: parts[2].trim().to_string(),
+                    index: parts[2].trim().parse().unwrap_or(0),
+                    file: parts[3].trim().to_string(),
                 })
             } else {
                 None
