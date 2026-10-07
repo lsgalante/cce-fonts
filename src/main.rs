@@ -693,7 +693,9 @@ impl Application for TypefaceApp {
 
         let size_spinbox = Spinbox::new(32, 8, 120, 1).with_label("Size:");
 
-        let mut preview_box = TextBox::new(String::from(DEFAULT_PREVIEW)).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
+        // Wrapped whatever the DE's `textbox_line_wrap`: a sample is read whole,
+        // not scrolled sideways, and a 32px one outruns the box.
+        let mut preview_box = TextBox::new(String::from(DEFAULT_PREVIEW)).with_multiline(true).with_line_wrap(true).with_draw_bg_border(true).with_max_width(None);
         preview_box.font_size = 32.0;
 
         let btn_h = cce_ui::layout::button_height();
