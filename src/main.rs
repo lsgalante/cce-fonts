@@ -646,7 +646,7 @@ impl Application for TypefaceApp {
             }
         } else {
             WindowSettings {
-                title: "CCE Fonts".to_string(),
+                title: "Fonts".to_string(),
                 app_id: "cce-fonts".to_string(),
                 width: 1200,
                 height: 720,
