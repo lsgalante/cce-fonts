@@ -252,6 +252,13 @@ struct TypefaceApp {
     /// The selected face's own italic / weight (see `face_attrs`): the preview
     /// box and the alphabet are shaped with it.
     selected_attrs: cce_ui::scene::paint::TextAttrs,
+    /// The family that names exactly the selected face (cce-ui's `face_family`
+    /// alias), which the preview box and alphabet are shaped in. The family's
+    /// own name will not do: BodonianScript's seven cuts, FormP Color Six's
+    /// colourways and Old Timey Mono's Condensed and Compressed files share one
+    /// family AND one style, width and weight, so by name every one of them
+    /// previewed as the first.
+    preview_family: Option<String>,
     /// The alphabet box's lines for the selected face (see `sample_lines`).
     sample: Vec<String>,
     charset_count: usize,
@@ -422,6 +429,7 @@ impl TypefaceApp {
                 self.family_files.clear();
                 self.family_indices.clear();
                 self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
+                self.preview_family = None;
                 self.set_sample(latin_sample());
                 self.style_dropdown.options.clear();
                 self.style_dropdown.selected = 0;
@@ -473,6 +481,7 @@ impl TypefaceApp {
             self.selected_style = None;
             self.selected_file = None;
             self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
+            self.preview_family = None;
             self.set_sample(latin_sample());
             self.charset_count = 0;
             self.charset_str = String::from("0");
@@ -500,6 +509,7 @@ impl TypefaceApp {
         self.style_dropdown.selected = idx;
         self.selected_style = Some(style);
         self.selected_attrs = self.face_attrs(&file, self.family_indices[idx]);
+        self.preview_family = Some(cce_ui::backend::text::face_family(&file, self.family_indices[idx]));
         let sample = match find_face(self.font_system.db(), &file, self.family_indices[idx]) {
             Some(face) => sample_lines(self.font_system.db(), face),
             None => latin_sample(),
@@ -552,7 +562,7 @@ impl TypefaceApp {
     /// number ("Noto Sans Symbols 2") would otherwise have that number read as
     /// its size by the toolkit's font-string split.
     fn sync_preview_font(&mut self) {
-        if let Some(ref family) = self.selected_family {
+        if let Some(family) = self.preview_family.as_ref().or(self.selected_family.as_ref()) {
             self.preview_box.font_family = format!("{} {}", family, self.preview_box.font_size);
         }
         self.preview_box.font_attrs = self.selected_attrs;
@@ -595,7 +605,7 @@ impl TypefaceApp {
     /// family with the style variant's italic/weight attrs (`TextAttrs` — the Phase 6 prim
     /// extension this app motivated), clipped to the preview box.
     fn push_alphabet_preview(&self, pc: &mut cce_ui::scene::paint::PaintCtx) {
-        let Some(ref family) = self.selected_family else { return };
+        let Some(family) = self.preview_family.as_ref().or(self.selected_family.as_ref()) else { return };
 
         let font_size = self.size_spinbox.value as f32;
         let attrs = self.selected_attrs;
@@ -723,6 +733,7 @@ impl Application for TypefaceApp {
             family_files: Vec::new(),
             family_indices: Vec::new(),
             selected_attrs: cce_ui::scene::paint::TextAttrs::default(),
+            preview_family: None,
             sample: latin_sample(),
             charset_count: 0,
             charset_str: String::from("0"),
@@ -856,6 +867,7 @@ impl Application for TypefaceApp {
                 self.family_files.clear();
                 self.family_indices.clear();
                 self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
+                self.preview_family = None;
                 self.set_sample(latin_sample());
                 self.style_dropdown.options.clear();
                 self.style_dropdown.selected = 0;
