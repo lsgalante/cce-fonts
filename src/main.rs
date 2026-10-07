@@ -396,22 +396,24 @@ impl TypefaceApp {
         self.sync_preview_font();
     }
 
-    /// The italic / weight that select exactly the face at `file`#`index`, as
-    /// fontdb read them from the font itself. cosmic-text takes a family's face
-    /// only at its exact weight (and style), so the style NAME is no guide:
+    /// The italic / weight / width that select exactly the face at `file`#`index`,
+    /// as fontdb read them from the font itself. cosmic-text takes a family's face
+    /// only at its exact weight, style and stretch, so the style NAME is no guide:
     /// Circe Slab's Light is weight 350, Bodoni Egyptian Mono Thin 280, Roboto's
-    /// Thin 250, and a guessed 300 or 400 matched none of them. (A cut that
-    /// differs only in width, Circe Slab A Narrow, cannot be told apart this
-    /// way: `TextAttrs` carries no stretch, so it previews as its normal-width
-    /// sibling at the same weight.)
+    /// Thin 250, and a guessed 300 or 400 matched none of them; Circe Slab A Narrow
+    /// differs from its sibling only in width.
     fn face_attrs(&self, file: &str, index: u32) -> cce_ui::scene::paint::TextAttrs {
-        use cce_ui::cosmic_text::fontdb::{Source, Style};
+        use cce_ui::cosmic_text::fontdb::{Source, Stretch, Style};
         let face = self.font_system.db().faces().find(|f| {
             f.index == index
                 && matches!(&f.source, Source::File(p) | Source::SharedFile(p, _) if p.as_os_str() == file)
         });
         match face {
-            Some(f) => cce_ui::scene::paint::TextAttrs { italic: f.style != Style::Normal, weight: Some(f.weight.0) },
+            Some(f) => cce_ui::scene::paint::TextAttrs {
+                italic: f.style != Style::Normal,
+                weight: Some(f.weight.0),
+                stretch: (f.stretch != Stretch::Normal).then(|| f.stretch.to_number()),
+            },
             None => cce_ui::scene::paint::TextAttrs::default(),
         }
     }

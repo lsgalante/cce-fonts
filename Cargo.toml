@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cce-ui = { git = "https://github.com/lsgalante/cce-ui.git", rev = "0dea9002fa5a7d828fac3e373167e6b620765479" }
+cce-ui = { git = "https://github.com/lsgalante/cce-ui.git", rev = "9771c92bc295ccc161e68a493251e7096b765b05" }
 smithay-client-toolkit = "0.19.2"
 calloop = "0.13.0"
 calloop-wayland-source = "0.3.0"
