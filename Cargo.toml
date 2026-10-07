@@ -10,3 +10,5 @@ calloop = "0.13.0"
 calloop-wayland-source = "0.3.0"
 wayland-client = { version = "0.31", features = ["system"] }
 xkeysym = "0.2"
+# fontdb 0.16's own version, so it adds no second copy: reads a face's cmap.
+ttf-parser = "0.20"

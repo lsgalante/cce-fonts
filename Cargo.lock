@@ -341,6 +341,7 @@ dependencies = [
  "calloop-wayland-source",
  "cce-ui",
  "smithay-client-toolkit",
+ "ttf-parser 0.20.0",
  "wayland-client",
  "xkeysym",
 ]

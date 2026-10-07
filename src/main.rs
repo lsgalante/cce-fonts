@@ -21,6 +21,113 @@ const SELECT_BAR_H: f32 = 48.0;
 /// `scroll_to_index` keeps the legacy 24 it always scrolled by).
 const LIST_ROW_H: f32 = 24.0;
 
+/// The preview box's text until the user types their own.
+const DEFAULT_PREVIEW: &str = "The quick brown fox jumps over the lazy dog";
+/// The alphabet box's lines for a face that covers Latin.
+const LATIN_SAMPLE: [&str; 4] = [
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+    "0123456789",
+    "!@#$%^&*()_+-=[]{}|;':\",./<>",
+];
+/// The sample lines drawn from a non-Latin face's own coverage: how many, and
+/// how many characters on each.
+const COVERAGE_LINES: usize = 4;
+const COVERAGE_LINE_CHARS: usize = 16;
+
+fn latin_sample() -> Vec<String> {
+    LATIN_SAMPLE.iter().map(|l| l.to_string()).collect()
+}
+
+/// The face fontdb loaded from `file`#`index`, if it loaded one: the faces it
+/// could not parse (WOFF2, bitmap-only .otb) are absent, and so are a variable
+/// font's named instances, which fc-list reports at index `n << 16` but
+/// fontdb (and the cosmic-text 0.12 renderer, which cannot set variation
+/// coordinates) knows only as the one default-instance face at index 0.
+fn find_face<'a>(
+    db: &'a cce_ui::cosmic_text::fontdb::Database,
+    file: &str,
+    index: u32,
+) -> Option<&'a cce_ui::cosmic_text::fontdb::FaceInfo> {
+    use cce_ui::cosmic_text::fontdb::Source;
+    db.faces().find(|f| {
+        f.index == index && matches!(&f.source, Source::File(p) | Source::SharedFile(p, _) if p.as_os_str() == file)
+    })
+}
+
+/// fc-list's faces that the renderer can actually draw (see `find_face`), one
+/// per family + style. An unloadable face is dropped BEFORE the dedup, so a
+/// family shipping both a .woff2 and a .ttf of a style keeps the .ttf: the
+/// .woff2 used to win when fc-list listed it first, and the style then
+/// previewed as the family's default face.
+fn previewable_fonts(db: &cce_ui::cosmic_text::fontdb::Database) -> Vec<pages::FontEntry> {
+    let mut seen = std::collections::HashSet::new();
+    pages::fetch_fonts()
+        .into_iter()
+        .filter(|f| find_face(db, &f.file, f.index).is_some())
+        .filter(|f| seen.insert((f.family.clone(), f.style.clone())))
+        .collect()
+}
+
+/// The alphabet box's lines for `face`: the Latin sample when the face covers
+/// Latin letters, else characters from its own coverage — an Arabic, Hebrew,
+/// music or icon font has no Latin, so the Latin sample drew entirely in the
+/// fallback sans and the preview showed nothing of the font. The characters
+/// come from the face's most populated 256-codepoint blocks first (its script,
+/// or its private-use icons), letters first, each in codepoint order.
+fn sample_lines(db: &cce_ui::cosmic_text::fontdb::Database, face: &cce_ui::cosmic_text::fontdb::FaceInfo) -> Vec<String> {
+    let mapped = db.with_face_data(face.id, |data, index| {
+        let Ok(f) = ttf_parser::Face::parse(data, index) else { return Vec::new() };
+        let mut cps = std::collections::BTreeSet::new();
+        for sub in f.tables().cmap.into_iter().flat_map(|c| c.subtables) {
+            if sub.is_unicode() {
+                sub.codepoints(|cp| {
+                    // A mark or a zero-advance glyph (a format character) shows
+                    // nothing alone but a dotted circle or a blank, and Arabic and
+                    // Hebrew open their blocks with dozens of them.
+                    let shows = sub.glyph_index(cp).is_some_and(|g| {
+                        g.0 != 0
+                            && f.tables().gdef.and_then(|t| t.glyph_class(g)) != Some(ttf_parser::gdef::GlyphClass::Mark)
+                            && f.glyph_hor_advance(g) != Some(0)
+                    });
+                    if shows {
+                        cps.insert(cp);
+                    }
+                });
+            }
+        }
+        cps.into_iter()
+            .filter_map(char::from_u32)
+            .filter(|c| !c.is_control() && !c.is_whitespace())
+            .collect::<Vec<char>>()
+    });
+    let Some(chars) = mapped.filter(|c| !c.is_empty()) else { return latin_sample() };
+    if chars.iter().filter(|c| c.is_ascii_alphabetic()).count() >= 26 {
+        return latin_sample();
+    }
+    let mut blocks: Vec<Vec<char>> = Vec::new();
+    for c in chars {
+        match blocks.last_mut() {
+            Some(b) if b[0] as u32 >> 8 == c as u32 >> 8 => b.push(c),
+            _ => blocks.push(vec![c]),
+        }
+    }
+    // The presentation-form blocks (Latin / Hebrew / Arabic ligatures and
+    // contextual forms) last: an Arabic font maps hundreds of them, more than
+    // its base letters, which shaping turns into those forms anyway.
+    let presentation = |c: char| matches!(c as u32, 0xFB00..=0xFDFF | 0xFE70..=0xFEFF);
+    blocks.sort_by_key(|b| (presentation(b[0]), std::cmp::Reverse(b.len())));
+    // Letters ahead of the script's punctuation and signs; icons and emoji
+    // are no letters, and keep their order.
+    let (mut picked, rest): (Vec<char>, Vec<char>) = blocks.into_iter().flatten().partition(|c| c.is_alphabetic());
+    picked.extend(rest);
+    picked.truncate(COVERAGE_LINES * COVERAGE_LINE_CHARS);
+    picked
+        .chunks(COVERAGE_LINE_CHARS)
+        .map(|line| line.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
 /// The family list's row gap, doubling as its inner inset.
 /// style: deliberate — the rows are 24px scan lines and the pane gap would
 /// triple their pitch; this is the toolkit `List::new(24, 4)` metric the
@@ -145,6 +252,8 @@ struct TypefaceApp {
     /// The selected face's own italic / weight (see `face_attrs`): the preview
     /// box and the alphabet are shaped with it.
     selected_attrs: cce_ui::scene::paint::TextAttrs,
+    /// The alphabet box's lines for the selected face (see `sample_lines`).
+    sample: Vec<String>,
     charset_count: usize,
     charset_str: String,
     is_user_font: bool,
@@ -282,7 +391,7 @@ impl TypefaceApp {
     }
 
     fn reload_fonts(&mut self) {
-        self.all_fonts = pages::fetch_fonts();
+        self.all_fonts = previewable_fonts(self.font_system.db());
         self.families = self.extract_families(&self.all_fonts);
         let query = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
         self.filtered = self.filter_families(&self.families, query);
@@ -313,6 +422,7 @@ impl TypefaceApp {
                 self.family_files.clear();
                 self.family_indices.clear();
                 self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
+                self.set_sample(latin_sample());
                 self.style_dropdown.options.clear();
                 self.style_dropdown.selected = 0;
                 self.charset_count = 0;
@@ -363,6 +473,7 @@ impl TypefaceApp {
             self.selected_style = None;
             self.selected_file = None;
             self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
+            self.set_sample(latin_sample());
             self.charset_count = 0;
             self.charset_str = String::from("0");
             self.is_user_font = false;
@@ -389,6 +500,11 @@ impl TypefaceApp {
         self.style_dropdown.selected = idx;
         self.selected_style = Some(style);
         self.selected_attrs = self.face_attrs(&file, self.family_indices[idx]);
+        let sample = match find_face(self.font_system.db(), &file, self.family_indices[idx]) {
+            Some(face) => sample_lines(self.font_system.db(), face),
+            None => latin_sample(),
+        };
+        self.set_sample(sample);
         self.charset_count = pages::count_chars(&file);
         self.charset_str = self.charset_count.to_string();
         self.is_user_font = pages::is_user_font(&file);
@@ -403,12 +519,8 @@ impl TypefaceApp {
     /// Thin 250, and a guessed 300 or 400 matched none of them; Circe Slab A Narrow
     /// differs from its sibling only in width.
     fn face_attrs(&self, file: &str, index: u32) -> cce_ui::scene::paint::TextAttrs {
-        use cce_ui::cosmic_text::fontdb::{Source, Stretch, Style};
-        let face = self.font_system.db().faces().find(|f| {
-            f.index == index
-                && matches!(&f.source, Source::File(p) | Source::SharedFile(p, _) if p.as_os_str() == file)
-        });
-        match face {
+        use cce_ui::cosmic_text::fontdb::{Stretch, Style};
+        match find_face(self.font_system.db(), file, index) {
             Some(f) => cce_ui::scene::paint::TextAttrs {
                 italic: f.style != Style::Normal,
                 weight: Some(f.weight.0),
@@ -416,6 +528,23 @@ impl TypefaceApp {
             },
             None => cce_ui::scene::paint::TextAttrs::default(),
         }
+    }
+
+    /// Show `sample` in the alphabet box, and its first line in the preview box
+    /// while that still holds the app's own text — never over what the user typed.
+    fn set_sample(&mut self, sample: Vec<String>) {
+        let auto = |s: &[String]| {
+            if s.iter().eq(LATIN_SAMPLE.iter()) {
+                DEFAULT_PREVIEW.to_string()
+            } else {
+                s.first().cloned().unwrap_or_else(|| DEFAULT_PREVIEW.to_string())
+            }
+        };
+        let (old, new) = (auto(&self.sample), auto(&sample));
+        if !self.preview_box.editing && self.preview_box.text == old {
+            self.preview_box.text = new;
+        }
+        self.sample = sample;
     }
 
     /// Point the preview box at the selected face. The family goes in WITH the
@@ -491,15 +620,9 @@ impl TypefaceApp {
         let bounds = Some([preview_box_x, bounds_y_start, preview_box_x + preview_box_w, bounds_y_end]);
 
         let size_used = (font_size * 0.55).clamp(8.0, 36.0);
-        let lines = [
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            "abcdefghijklmnopqrstuvwxyz",
-            "0123456789",
-            "!@#$%^&*()_+-=[]{}|;':\",./<>",
-        ];
-        for (i, line) in lines.iter().enumerate() {
+        for (i, line) in self.sample.iter().enumerate() {
             pc.text_attrs(
-                *line,
+                line.as_str(),
                 preview_box_x + pad,
                 alphabet_draw_y + pad + i as f32 * size_used * 1.4,
                 size_used,
@@ -560,7 +683,7 @@ impl Application for TypefaceApp {
 
         let size_spinbox = Spinbox::new(32, 8, 120, 1).with_label("Size:");
 
-        let mut preview_box = TextBox::new(String::from("The quick brown fox jumps over the lazy dog")).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
+        let mut preview_box = TextBox::new(String::from(DEFAULT_PREVIEW)).with_multiline(true).with_draw_bg_border(true).with_max_width(None);
         preview_box.font_size = 32.0;
 
         let btn_h = cce_ui::layout::button_height();
@@ -570,7 +693,8 @@ impl Application for TypefaceApp {
         let select_cancel_btn = Button::new_reset(0.0, 0.0, 80.0, btn_h).with_label("Cancel");
         let select_confirm_btn = Button::new(0.0, 0.0, 80.0, btn_h).with_label("Select");
 
-        let all_fonts = pages::fetch_fonts();
+        let font_system = cce_ui::create_font_system_with_system_fonts();
+        let all_fonts = previewable_fonts(font_system.db());
         let mut app = Self {
             keys: FontsKeys::load(),
             search_box,
@@ -588,7 +712,7 @@ impl Application for TypefaceApp {
             select_mode,
             last_click_idx: None,
             last_click_at: None,
-            all_fonts: all_fonts.clone(),
+            all_fonts,
             families: Vec::new(),
             filtered: Vec::new(),
             selected_idx: None,
@@ -599,13 +723,14 @@ impl Application for TypefaceApp {
             family_files: Vec::new(),
             family_indices: Vec::new(),
             selected_attrs: cce_ui::scene::paint::TextAttrs::default(),
+            sample: latin_sample(),
             charset_count: 0,
             charset_str: String::from("0"),
             is_user_font: false,
             width: if select_mode { 900 } else { 1200 },
             height: if select_mode { 500 } else { 720 },
             scale_factor: 1.0,
-            font_system: cce_ui::create_font_system_with_system_fonts(),
+            font_system,
             needs_rebuild: true,
             mid_region: ScrollRegion::new(0.0, 4.0)
                 .with_sink_behind(true),
@@ -731,6 +856,7 @@ impl Application for TypefaceApp {
                 self.family_files.clear();
                 self.family_indices.clear();
                 self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
+                self.set_sample(latin_sample());
                 self.style_dropdown.options.clear();
                 self.style_dropdown.selected = 0;
                 self.charset_count = 0;

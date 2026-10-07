@@ -37,8 +37,8 @@ pub fn fetch_fonts() -> Vec<FontEntry> {
         })
         .collect();
 
+    // Deduped by the caller, which first drops the faces it cannot render.
     fonts.sort_by(|a, b| a.family.to_lowercase().cmp(&b.family.to_lowercase()));
-    fonts.dedup_by(|a, b| a.family == b.family && a.style == b.style);
     fonts
 }
 
