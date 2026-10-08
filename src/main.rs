@@ -1,6 +1,7 @@
 mod pages;
 
 use wayland_client::QueueHandle;
+use cce_ui::widget::Owned;
 use cce_ui::cosmic_text::FontSystem;
 use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
@@ -213,23 +214,23 @@ struct TypefaceApp {
     keys: FontsKeys,
 
     // Browse panel
-    search_box: cce_ui::widget::Adapted<TextBox>,
+    search_box: Owned<cce_ui::widget::Adapted<TextBox>>,
     list_region: ScrollRegion,
     list_item_h: f32,
-    font_buttons: Vec<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    font_buttons: Vec<Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>>,
 
     // Preview panel
-    style_dropdown: cce_ui::widget::Adapted<Dropdown>,
-    size_spinbox: cce_ui::widget::Adapted<cce_ui::widget::Spinbox>,
-    preview_box: cce_ui::widget::Adapted<TextBox>,
+    style_dropdown: Owned<cce_ui::widget::Adapted<Dropdown>>,
+    size_spinbox: Owned<cce_ui::widget::Adapted<cce_ui::widget::Spinbox>>,
+    preview_box: Owned<cce_ui::widget::Adapted<TextBox>>,
 
     // Details panel
-    btn_open_folder: cce_ui::widget::Adapted<cce_ui::widget::Button>,
-    btn_remove_font: cce_ui::widget::Adapted<cce_ui::widget::Button>,
+    btn_open_folder: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    btn_remove_font: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
 
     // Selection mode buttons
-    select_cancel_btn: cce_ui::widget::Adapted<cce_ui::widget::Button>,
-    select_confirm_btn: cce_ui::widget::Adapted<cce_ui::widget::Button>,
+    select_cancel_btn: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    select_confirm_btn: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
     select_mode: bool,
     last_click_idx: Option<usize>,
     /// When that click landed. A wall clock, not a `dt` countdown: `dt` is
@@ -406,7 +407,7 @@ impl TypefaceApp {
         for id in stale {
             self.ui_context.unregister_widget(id);
         }
-        self.font_buttons = self.filtered.iter().map(|f| Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f)).collect();
+        self.font_buttons = self.filtered.iter().map(|f| Owned::new(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
         // ...and register the replacements now. `dispatch_widgets()` reports every row whose
         // rect passes the parked-sentinel gate, and fresh rows are (0,0,0,0) so they pass it
         // immediately — but `register_widgets()` only runs in the next layout pass, so the
@@ -705,18 +706,18 @@ impl Application for TypefaceApp {
         let all_fonts = previewable_fonts(font_system.db());
         let mut app = Self {
             keys: FontsKeys::load(),
-            search_box,
+            search_box: Owned::new(search_box),
             list_region: ScrollRegion::new(0.0, 4.0)
                 .with_sink_behind(true),
             list_item_h,
             font_buttons: Vec::new(),
-            style_dropdown,
-            size_spinbox,
-            preview_box,
-            btn_open_folder,
-            btn_remove_font,
-            select_cancel_btn,
-            select_confirm_btn,
+            style_dropdown: Owned::new(style_dropdown),
+            size_spinbox: Owned::new(size_spinbox),
+            preview_box: Owned::new(preview_box),
+            btn_open_folder: Owned::new(btn_open_folder),
+            btn_remove_font: Owned::new(btn_remove_font),
+            select_cancel_btn: Owned::new(select_cancel_btn),
+            select_confirm_btn: Owned::new(select_confirm_btn),
             select_mode,
             last_click_idx: None,
             last_click_at: None,
@@ -749,7 +750,7 @@ impl Application for TypefaceApp {
         
         app.families = app.extract_families(&app.all_fonts);
         app.filtered = app.filter_families(&app.families, "");
-        app.font_buttons = app.filtered.iter().map(|f| Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f)).collect();
+        app.font_buttons = app.filtered.iter().map(|f| Owned::new(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
         
         // Parse preselected family and size from CLI args (passed by FontSelector)
         let mut preselected_family = None;
@@ -848,7 +849,7 @@ impl Application for TypefaceApp {
                 for id in stale {
                     self.ui_context.unregister_widget(id);
                 }
-                self.font_buttons = self.filtered.iter().map(|f| Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f)).collect();
+                self.font_buttons = self.filtered.iter().map(|f| Owned::new(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
                 // Register the replacements now rather than waiting for the next layout pass —
                 // see refresh(). This is the path that produced the stale-root spam.
                 for btn in self.font_buttons.iter_mut() {
