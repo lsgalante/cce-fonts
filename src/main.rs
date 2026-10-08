@@ -394,6 +394,15 @@ impl TypefaceApp {
         v
     }
 
+    /// Pick up fonts installed or removed since launch: the font database is
+    /// the disk as it was at startup until rescanned, so a reload alone only
+    /// relisted what was already known. The engine's renderer takes the same
+    /// change before its next frame.
+    fn rescan_fonts(&mut self) {
+        cce_ui::rescan_fonts(&mut self.font_system);
+        self.reload_fonts();
+    }
+
     fn reload_fonts(&mut self) {
         self.all_fonts = previewable_fonts(self.font_system.db());
         self.families = self.extract_families(&self.all_fonts);
@@ -415,6 +424,11 @@ impl TypefaceApp {
             self.ui_context.register_host(btn);
         }
 
+        // A rescan can add families above the selection: keep it by name, not
+        // by row. (A removed family leaves its row to the one after it.)
+        if let Some(i) = self.selected_family.as_ref().and_then(|f| self.filtered.iter().position(|g| g == f)) {
+            self.selected_idx = Some(i);
+        }
         if let Some(sel) = self.selected_idx {
             if sel >= self.filtered.len() {
                 self.selected_idx = None;
@@ -892,16 +906,17 @@ impl Application for TypefaceApp {
             AppMessage::RemoveFont => {
                 if let Some(ref file) = self.selected_file {
                     if self.is_user_font {
-                        let _ = std::process::Command::new("gio").args(["trash", file]).spawn();
+                        // Waited for: the rescan must find the file gone.
+                        let _ = std::process::Command::new("gio").args(["trash", file]).status();
                         let _ = std::process::Command::new("fc-cache").arg("-f").spawn();
-                        self.reload_fonts();
+                        self.rescan_fonts();
                         *needs_rebuild = true;
                         self.needs_rebuild = true;
                     }
                 }
             }
             AppMessage::RefreshFonts => {
-                self.reload_fonts();
+                self.rescan_fonts();
                 *needs_rebuild = true;
                 self.needs_rebuild = true;
             }
