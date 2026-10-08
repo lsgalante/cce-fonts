@@ -1,9 +1,8 @@
 mod pages;
 
-use wayland_client::QueueHandle;
 use cce_ui::widget::Owned;
 use cce_ui::cosmic_text::FontSystem;
-use cce_ui::engine::{Application, EngineState, LogicalPosition, LogicalSize, WindowSettings};
+use cce_ui::engine::{Application, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
     MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost, Event,
     TextBox, Button, Key, NamedKey, Dropdown, Spinbox, ScrollRegion,
@@ -673,7 +672,7 @@ impl Application for TypefaceApp {
         self.ui_context.drag_allowed_at(px, py)
     }
 
-    fn new(_qh: &QueueHandle<EngineState<Self>>, _sender: calloop::channel::Sender<Self::Message>) -> Self {
+    fn create(_sender: cce_ui::engine::AppSender<Self::Message>) -> Self {
         cce_ui::scale::set_scale_factor(1.0);
         // Parse command line arguments
         let args: Vec<String> = std::env::args().collect();
