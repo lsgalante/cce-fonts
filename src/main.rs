@@ -297,8 +297,13 @@ impl TypefaceApp {
             self.ui_context.register_host(&mut self.style_dropdown);
             self.ui_context.register_host(&mut self.size_spinbox);
             self.ui_context.register_host(&mut self.preview_box);
-            self.ui_context.register_host(&mut self.select_cancel_btn);
-            self.ui_context.register_host(&mut self.select_confirm_btn);
+            // The picker's Cancel / Select exist only in select mode (`--select`), where they
+            // are laid out and drawn; registered otherwise they sat unplaced at the window's
+            // corner as the first two stops of the Tab walk and the accessibility tree.
+            if self.select_mode {
+                self.ui_context.register_host(&mut self.select_cancel_btn);
+                self.ui_context.register_host(&mut self.select_confirm_btn);
+            }
         }
         for btn in self.font_buttons.iter_mut() {
             if btn.rect().0 > -9000.0 {
