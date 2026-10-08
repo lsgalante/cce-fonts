@@ -1269,13 +1269,13 @@ impl Application for TypefaceApp {
 
         if state == ElementState::Pressed && button == MouseButton::Left {
             if !self.search_box.hit_test(px, py, &self.ui_context) {
-                self.search_box.unfocus();
+                self.ui_context.unfocus_widget(&mut self.search_box);
                 changed = true;
             } else {
                 self.ui_context.set_focused(&mut self.search_box);
             }
             if !self.preview_box.hit_test(px, py, &self.ui_context) {
-                self.preview_box.unfocus();
+                self.ui_context.unfocus_widget(&mut self.preview_box);
                 changed = true;
             } else {
                 self.ui_context.set_focused(&mut self.preview_box);
@@ -1328,6 +1328,11 @@ impl Application for TypefaceApp {
                 if state == ElementState::Pressed {
                     let missed = self.ui_context.get_widget(root).map_or(false, |w| !w.hit_test(px, py, &self.ui_context));
                     if missed {
+                        // The window's focus lets go of it too (`UiContext::unfocus_widget`,
+                        // done in two steps since the widget is borrowed from the context).
+                        if self.ui_context.focused_widget == Some(root) {
+                            self.ui_context.focused_widget = None;
+                        }
                         if let Some(w) = self.ui_context.get_widget_mut(root) {
                             w.unfocus();
                         }
@@ -1429,14 +1434,14 @@ impl Application for TypefaceApp {
                 msg_out = Some(AppMessage::RefreshFonts);
                 handled = true;
             } else if m(&self.keys.open_search) {
-                self.search_box.focus();
+                self.ui_context.focus_widget(&mut self.search_box);
                 self.ui_context.set_focused(&mut self.search_box);
-                self.preview_box.unfocus();
+                self.ui_context.unfocus_widget(&mut self.preview_box);
                 handled = true;
             } else if m(&self.keys.focus_preview) {
-                self.preview_box.focus();
+                self.ui_context.focus_widget(&mut self.preview_box);
                 self.ui_context.set_focused(&mut self.preview_box);
-                self.search_box.unfocus();
+                self.ui_context.unfocus_widget(&mut self.search_box);
                 handled = true;
             } else if m(&self.keys.open_folder) {
                 msg_out = Some(AppMessage::OpenFolder);
