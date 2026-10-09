@@ -1,6 +1,6 @@
 mod pages;
 
-use cce_ui::widget::Owned;
+use cce_ui::widget::Handle;
 use cce_ui::cosmic_text::FontSystem;
 use cce_ui::engine::{Application, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
@@ -213,23 +213,23 @@ struct TypefaceApp {
     keys: FontsKeys,
 
     // Browse panel
-    search_box: Owned<cce_ui::widget::Adapted<TextBox>>,
+    search_box: Handle<cce_ui::widget::Adapted<TextBox>>,
     list_region: ScrollRegion,
     list_item_h: f32,
-    font_buttons: Vec<Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>>,
+    font_buttons: Vec<Handle<cce_ui::widget::Adapted<cce_ui::widget::Button>>>,
 
     // Preview panel
-    style_dropdown: Owned<cce_ui::widget::Adapted<Dropdown>>,
-    size_spinbox: Owned<cce_ui::widget::Adapted<cce_ui::widget::Spinbox>>,
-    preview_box: Owned<cce_ui::widget::Adapted<TextBox>>,
+    style_dropdown: Handle<cce_ui::widget::Adapted<Dropdown>>,
+    size_spinbox: Handle<cce_ui::widget::Adapted<cce_ui::widget::Spinbox>>,
+    preview_box: Handle<cce_ui::widget::Adapted<TextBox>>,
 
     // Details panel
-    btn_open_folder: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
-    btn_remove_font: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    btn_open_folder: Handle<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    btn_remove_font: Handle<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
 
     // Selection mode buttons
-    select_cancel_btn: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
-    select_confirm_btn: Owned<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    select_cancel_btn: Handle<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
+    select_confirm_btn: Handle<cce_ui::widget::Adapted<cce_ui::widget::Button>>,
     select_mode: bool,
     last_click_idx: Option<usize>,
     /// When that click landed. A wall clock, not a `dt` countdown: `dt` is
@@ -280,38 +280,10 @@ struct TypefaceApp {
     // plates and scroll frames are prims, scroll state lives in the ScrollRegions,
     // children are dispatched/walked directly, panel rects are computed)
     mid_region: ScrollRegion,
-    widgets_registered: bool,
     ui_context: cce_ui::context::UiContext,
 }
 
 impl TypefaceApp {
-    /// Register the widgets (parentless — the panel Plates are dissolved). Static widgets
-    /// once; the font-list buttons every rebuild (they are recreated on search changes,
-    /// same cadence the old per-rebuild link_parent_child re-registration had).
-    fn register_widgets(&mut self) {
-        if !self.widgets_registered {
-            self.widgets_registered = true;
-            self.ui_context.register_host(&mut self.search_box);
-            self.ui_context.register_host(&mut self.btn_open_folder);
-            self.ui_context.register_host(&mut self.btn_remove_font);
-            self.ui_context.register_host(&mut self.style_dropdown);
-            self.ui_context.register_host(&mut self.size_spinbox);
-            self.ui_context.register_host(&mut self.preview_box);
-            // The picker's Cancel / Select exist only in select mode (`--select`), where they
-            // are laid out and drawn; registered otherwise they sat unplaced at the window's
-            // corner as the first two stops of the Tab walk and the accessibility tree.
-            if self.select_mode {
-                self.ui_context.register_host(&mut self.select_cancel_btn);
-                self.ui_context.register_host(&mut self.select_confirm_btn);
-            }
-        }
-        for btn in self.font_buttons.iter_mut() {
-            if btn.rect().0 > -9000.0 {
-                self.ui_context.register_host(btn);
-            }
-        }
-    }
-
     /// The panes' height: the window less the root inset at top and bottom,
     /// and in select mode the bar and the root gap that separates it.
     fn content_h(&self) -> f32 {
@@ -339,8 +311,8 @@ impl TypefaceApp {
         let pad = cce_ui::layout::plate_padding();
         let gap = cce_ui::layout::plate_gap();
         let control_gap = cce_ui::layout::control_gap();
-        let dropdown_h = cce_ui::layout::dropdown_height() + self.style_dropdown.label_strip();
-        let spinbox_h = cce_ui::layout::spinbox_height() + self.size_spinbox.label_strip();
+        let dropdown_h = cce_ui::layout::dropdown_height() + self.ui_context[self.style_dropdown].label_strip();
+        let spinbox_h = cce_ui::layout::spinbox_height() + self.ui_context[self.size_spinbox].label_strip();
         let preview_h = if self.select_mode { 120.0 } else { 180.0 };
         let alphabet_h = if self.select_mode { 102.0 } else { 120.0 };
         let buttons_y = pad;
@@ -377,8 +349,8 @@ impl TypefaceApp {
     fn dispatch_widgets(&mut self, forward: bool) -> Vec<cce_ui::widget::WidgetId> {
         let mut v: Vec<cce_ui::widget::WidgetId> = Vec::new();
         v.push(self.search_box.id());
-        for btn in self.font_buttons.iter() {
-            if btn.rect().0 > -9000.0 {
+        for &btn in self.font_buttons.iter() {
+            if self.ui_context[btn].rect().0 > -9000.0 {
                 v.push(btn.id());
             }
         }
@@ -411,23 +383,15 @@ impl TypefaceApp {
     fn reload_fonts(&mut self) {
         self.all_fonts = previewable_fonts(self.font_system.db());
         self.families = self.extract_families(&self.all_fonts);
-        let query = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
+        let query = if self.ui_context[self.search_box].editing { &self.ui_context[self.search_box].edit_buffer } else { &self.ui_context[self.search_box].text };
         self.filtered = self.filter_families(&self.families, query);
-        // Ids are globally monotonic and never reused, so the fresh buttons register under
-        // NEW ids; the outgoing ones would keep pointing into this Vec's freed buffer, and
-        // the engine derefs the whole registry on every left press. Drop them first.
-        let stale: Vec<_> = self.font_buttons.iter().map(|b| b.id()).collect();
-        for id in stale {
-            self.ui_context.unregister_widget(id);
+        // The context owns the rows: the outgoing ones are taken out of it (their ids are
+        // never reused) and the fresh ones put in, registered from the moment they exist.
+        for h in std::mem::take(&mut self.font_buttons) {
+            self.ui_context.remove(h);
         }
-        self.font_buttons = self.filtered.iter().map(|f| Owned::new(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
-        // ...and register the replacements now. `dispatch_widgets()` reports every row whose
-        // rect passes the parked-sentinel gate, and fresh rows are (0,0,0,0) so they pass it
-        // immediately — but `register_widgets()` only runs in the next layout pass, so the
-        // ids were reported unregistered until then and the router dropped those events.
-        for btn in self.font_buttons.iter_mut() {
-            self.ui_context.register_host(btn);
-        }
+        let ctx = &mut self.ui_context;
+        self.font_buttons = self.filtered.iter().map(|f| ctx.insert(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
 
         // A rescan can add families above the selection: keep it by name, not
         // by row. (A removed family leaves its row to the one after it.)
@@ -446,8 +410,8 @@ impl TypefaceApp {
                 self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
                 self.preview_family = None;
                 self.set_sample(latin_sample());
-                self.style_dropdown.options.clear();
-                self.style_dropdown.selected = 0;
+                self.ui_context[self.style_dropdown].options.clear();
+                self.ui_context[self.style_dropdown].selected = 0;
                 self.charset_count = 0;
                 self.charset_str = String::from("0");
                 self.is_user_font = false;
@@ -489,8 +453,8 @@ impl TypefaceApp {
 
         // Pick default style: "Regular" if available, else first
         let default_idx = self.family_styles.iter().position(|s| s == "Regular").unwrap_or(0);
-        self.style_dropdown.options = self.family_styles.clone();
-        self.style_dropdown.selected = default_idx;
+        self.ui_context[self.style_dropdown].options = self.family_styles.clone();
+        self.ui_context[self.style_dropdown].selected = default_idx;
 
         if self.family_styles.is_empty() {
             self.selected_style = None;
@@ -508,8 +472,8 @@ impl TypefaceApp {
 
         // Highlight selected button
         if let Some(sel) = self.selected_idx {
-            for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
-                btn.selected = idx == sel;
+            for (idx, &btn) in self.font_buttons.iter().enumerate() {
+                self.ui_context[btn].selected = idx == sel;
             }
         }
         
@@ -521,7 +485,7 @@ impl TypefaceApp {
     fn select_style(&mut self, idx: usize) {
         let style = self.family_styles[idx].clone();
         let file = self.family_files[idx].clone();
-        self.style_dropdown.selected = idx;
+        self.ui_context[self.style_dropdown].selected = idx;
         self.selected_style = Some(style);
         self.selected_attrs = self.face_attrs(&file, self.family_indices[idx]);
         self.preview_family = Some(cce_ui::backend::text::face_family(&file, self.family_indices[idx]));
@@ -566,8 +530,8 @@ impl TypefaceApp {
             }
         };
         let (old, new) = (auto(&self.sample), auto(&sample));
-        if !self.preview_box.editing && self.preview_box.text == old {
-            self.preview_box.text = new;
+        if !self.ui_context[self.preview_box].editing && self.ui_context[self.preview_box].text == old {
+            self.ui_context[self.preview_box].text = new;
         }
         self.sample = sample;
     }
@@ -578,9 +542,9 @@ impl TypefaceApp {
     /// its size by the toolkit's font-string split.
     fn sync_preview_font(&mut self) {
         if let Some(family) = self.preview_family.as_ref().or(self.selected_family.as_ref()) {
-            self.preview_box.font_family = format!("{} {}", family, self.preview_box.font_size);
+            self.ui_context[self.preview_box].font_family = format!("{} {}", family, self.ui_context[self.preview_box].font_size);
         }
-        self.preview_box.font_attrs = self.selected_attrs;
+        self.ui_context[self.preview_box].font_attrs = self.selected_attrs;
     }
 
     fn scroll_to_index(&mut self, index: usize) {
@@ -602,17 +566,17 @@ impl TypefaceApp {
     /// engine (which also carries the system fonts via `load_system_fonts`).
     fn refresh_widget_text(&mut self) {
         let font_system = &mut self.font_system;
-        self.search_box.prepare_text(font_system);
-        for btn in &mut self.font_buttons {
-            btn.prepare_text(font_system);
+        self.ui_context[self.search_box].prepare_text(font_system);
+        for &btn in &self.font_buttons {
+            self.ui_context[btn].prepare_text(font_system);
         }
-        self.style_dropdown.prepare_text(font_system);
-        self.size_spinbox.prepare_text(font_system);
-        self.preview_box.prepare_text(font_system);
-        self.btn_open_folder.prepare_text(font_system);
-        self.btn_remove_font.prepare_text(font_system);
-        self.select_cancel_btn.prepare_text(font_system);
-        self.select_confirm_btn.prepare_text(font_system);
+        self.ui_context[self.style_dropdown].prepare_text(font_system);
+        self.ui_context[self.size_spinbox].prepare_text(font_system);
+        self.ui_context[self.preview_box].prepare_text(font_system);
+        self.ui_context[self.btn_open_folder].prepare_text(font_system);
+        self.ui_context[self.btn_remove_font].prepare_text(font_system);
+        self.ui_context[self.select_cancel_btn].prepare_text(font_system);
+        self.ui_context[self.select_confirm_btn].prepare_text(font_system);
     }
 
     /// The alphabet preview as display-list text: one prim per line (the legacy single
@@ -622,7 +586,7 @@ impl TypefaceApp {
     fn push_alphabet_preview(&self, pc: &mut cce_ui::scene::paint::PaintCtx) {
         let Some(family) = self.preview_family.as_ref().or(self.selected_family.as_ref()) else { return };
 
-        let font_size = self.size_spinbox.value as f32;
+        let font_size = self.ui_context[self.size_spinbox].value as f32;
         let attrs = self.selected_attrs;
 
         let (mid_panel_x, panel_y, mid_panel_w, mid_panel_h) = self.mid_panel_rect();
@@ -722,20 +686,22 @@ impl Application for TypefaceApp {
 
         let font_system = cce_ui::create_font_system_with_system_fonts();
         let all_fonts = previewable_fonts(font_system.db());
+        // The context owns the widgets; the app keeps their handles.
+        let mut ui_context = cce_ui::context::UiContext::new();
         let mut app = Self {
             keys: FontsKeys::load(),
-            search_box: Owned::new(search_box),
+            search_box: ui_context.insert(search_box),
             list_region: ScrollRegion::new(0.0, 4.0)
                 .with_sink_behind(true),
             list_item_h,
             font_buttons: Vec::new(),
-            style_dropdown: Owned::new(style_dropdown),
-            size_spinbox: Owned::new(size_spinbox),
-            preview_box: Owned::new(preview_box),
-            btn_open_folder: Owned::new(btn_open_folder),
-            btn_remove_font: Owned::new(btn_remove_font),
-            select_cancel_btn: Owned::new(select_cancel_btn),
-            select_confirm_btn: Owned::new(select_confirm_btn),
+            style_dropdown: ui_context.insert(style_dropdown),
+            size_spinbox: ui_context.insert(size_spinbox),
+            preview_box: ui_context.insert(preview_box),
+            btn_open_folder: ui_context.insert(btn_open_folder),
+            btn_remove_font: ui_context.insert(btn_remove_font),
+            select_cancel_btn: ui_context.insert(select_cancel_btn),
+            select_confirm_btn: ui_context.insert(select_confirm_btn),
             select_mode,
             last_click_idx: None,
             last_click_at: None,
@@ -762,13 +728,18 @@ impl Application for TypefaceApp {
             needs_rebuild: true,
             mid_region: ScrollRegion::new(0.0, 4.0)
                 .with_sink_behind(true),
-            widgets_registered: false,
-            ui_context: cce_ui::context::UiContext::new(),
+            ui_context,
         };
         
+        // The picker's Cancel / Select exist only in select mode (`--select`), where they
+        // are laid out and drawn; shown otherwise they sat unplaced at the window's corner
+        // as the first two stops of the Tab walk and the accessibility tree.
+        app.ui_context[app.select_cancel_btn].set_visible(select_mode);
+        app.ui_context[app.select_confirm_btn].set_visible(select_mode);
+
         app.families = app.extract_families(&app.all_fonts);
         app.filtered = app.filter_families(&app.families, "");
-        app.font_buttons = app.filtered.iter().map(|f| Owned::new(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
+        app.font_buttons = app.filtered.iter().map(|f| app.ui_context.insert(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
         
         // Parse preselected family and size from CLI args (passed by FontSelector)
         let mut preselected_family = None;
@@ -796,11 +767,11 @@ impl Application for TypefaceApp {
         }
 
         if let Some(sz) = preselected_size {
-            app.size_spinbox.value = sz as i32;
-            if app.size_spinbox.editing {
-                app.size_spinbox.edit_buffer = app.size_spinbox.value.to_string();
+            app.ui_context[app.size_spinbox].value = sz as i32;
+            if app.ui_context[app.size_spinbox].editing {
+                app.ui_context[app.size_spinbox].edit_buffer = app.ui_context[app.size_spinbox].value.to_string();
             }
-            app.preview_box.font_size = sz;
+            app.ui_context[app.preview_box].font_size = sz;
             app.sync_preview_font();
         }
 
@@ -852,27 +823,20 @@ impl Application for TypefaceApp {
                 }
             }
             AppMessage::FontSizeChanged => {
-                self.preview_box.font_size = self.size_spinbox.value as f32;
+                self.ui_context[self.preview_box].font_size = self.ui_context[self.size_spinbox].value as f32;
                 self.sync_preview_font();
                 *needs_rebuild = true;
                 self.needs_rebuild = true;
             }
             AppMessage::SearchChanged => {
-                let query = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
+                let query = if self.ui_context[self.search_box].editing { &self.ui_context[self.search_box].edit_buffer } else { &self.ui_context[self.search_box].text };
                 self.filtered = self.filter_families(&self.families, query);
-                // See the note in refresh(): monotonic ids mean the outgoing buttons must be
-                // unregistered or the registry keeps dangling pointers. This path runs on
-                // every keystroke in the filter box, so it is the hottest producer of them.
-                let stale: Vec<_> = self.font_buttons.iter().map(|b| b.id()).collect();
-                for id in stale {
-                    self.ui_context.unregister_widget(id);
+                // The rows are rebuilt on every keystroke in the filter box (see refresh()).
+                for h in std::mem::take(&mut self.font_buttons) {
+                    self.ui_context.remove(h);
                 }
-                self.font_buttons = self.filtered.iter().map(|f| Owned::new(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
-                // Register the replacements now rather than waiting for the next layout pass —
-                // see refresh(). This is the path that produced the stale-root spam.
-                for btn in self.font_buttons.iter_mut() {
-                    self.ui_context.register_host(btn);
-                }
+                let ctx = &mut self.ui_context;
+                self.font_buttons = self.filtered.iter().map(|f| ctx.insert(Button::new_list_row(0.0, 0.0, 0.0, 0.0).with_label(f))).collect();
 
                 // reset or re-evaluate selection
                 self.selected_idx = None;
@@ -885,8 +849,8 @@ impl Application for TypefaceApp {
                 self.selected_attrs = cce_ui::scene::paint::TextAttrs::default();
                 self.preview_family = None;
                 self.set_sample(latin_sample());
-                self.style_dropdown.options.clear();
-                self.style_dropdown.selected = 0;
+                self.ui_context[self.style_dropdown].options.clear();
+                self.ui_context[self.style_dropdown].selected = 0;
                 self.charset_count = 0;
                 self.charset_str = String::from("0");
                 self.is_user_font = false;
@@ -987,7 +951,6 @@ impl Application for TypefaceApp {
 
         if self.needs_rebuild || size_changed {
             cce_ui::scale::set_scale_factor(scale as f32);
-            self.register_widgets();
 
             self.mid_region.set_rect(mid_panel_x, panel_y, mid_panel_w, content_h);
 
@@ -996,7 +959,7 @@ impl Application for TypefaceApp {
 
             // Search box, inset from the pane's rim.
             let search_h = cce_ui::layout::textbox_height();
-            self.search_box.set_rect(left_panel_x + pad, panel_y + pad, left_panel_w - 2.0 * pad, search_h);
+            self.ui_context[self.search_box].set_rect(left_panel_x + pad, panel_y + pad, left_panel_w - 2.0 * pad, search_h);
 
             // Scrolling list: a pane gap below the search box, down to the
             // pane's padded bottom rim.
@@ -1010,7 +973,8 @@ impl Application for TypefaceApp {
             self.list_region.update_bounds_raw(self.filtered.len() as f32 * item_full + row_gap, list_y, list_h);
 
             // Layout list buttons, inset from the list by its row gap.
-            for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
+            for (idx, &btn) in self.font_buttons.iter().enumerate() {
+                let btn = &mut self.ui_context[btn];
                 if let Some(draw_y) = self.list_region.get_draw_y(idx as f32 * item_full, self.list_item_h) {
                     btn.set_rect(list_x + row_gap, draw_y, list_w - 2.0 * row_gap, LIST_ROW_H);
                 } else {
@@ -1029,35 +993,35 @@ impl Application for TypefaceApp {
             let btn_h = cce_ui::layout::button_height();
             let btn_draw_y = panel_y + form.buttons_y - scroll_y;
             if btn_draw_y + btn_h >= viewport_top && btn_draw_y <= viewport_bottom {
-                self.btn_open_folder.set_rect(control_x, btn_draw_y, 110.0, btn_h);
-                self.btn_remove_font.set_rect(control_x + 110.0 + gap, btn_draw_y, 110.0, btn_h);
+                self.ui_context[self.btn_open_folder].set_rect(control_x, btn_draw_y, 110.0, btn_h);
+                self.ui_context[self.btn_remove_font].set_rect(control_x + 110.0 + gap, btn_draw_y, 110.0, btn_h);
             } else {
-                self.btn_open_folder.set_rect(-9999.0, -9999.0, 0.0, 0.0);
-                self.btn_remove_font.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.ui_context[self.btn_open_folder].set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.ui_context[self.btn_remove_font].set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
             // Style dropdown
             let dropdown_draw_y = panel_y + form.dropdown_y - scroll_y;
             if dropdown_draw_y + form.dropdown_h >= viewport_top && dropdown_draw_y <= viewport_bottom {
-                self.style_dropdown.set_rect(control_x, dropdown_draw_y, control_w, form.dropdown_h);
+                self.ui_context[self.style_dropdown].set_rect(control_x, dropdown_draw_y, control_w, form.dropdown_h);
             } else {
-                self.style_dropdown.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.ui_context[self.style_dropdown].set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
             // Size spinbox
             let spinbox_draw_y = panel_y + form.spinbox_y - scroll_y;
             if spinbox_draw_y + form.spinbox_h >= viewport_top && spinbox_draw_y <= viewport_bottom {
-                self.size_spinbox.set_rect(control_x, spinbox_draw_y, control_w, form.spinbox_h);
+                self.ui_context[self.size_spinbox].set_rect(control_x, spinbox_draw_y, control_w, form.spinbox_h);
             } else {
-                self.size_spinbox.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.ui_context[self.size_spinbox].set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
             // Preview box
             let preview_draw_y = panel_y + form.preview_y - scroll_y;
             if preview_draw_y + form.preview_h >= viewport_top && preview_draw_y <= viewport_bottom {
-                self.preview_box.set_rect(control_x, preview_draw_y, control_w, form.preview_h);
+                self.ui_context[self.preview_box].set_rect(control_x, preview_draw_y, control_w, form.preview_h);
             } else {
-                self.preview_box.set_rect(-9999.0, -9999.0, 0.0, 0.0);
+                self.ui_context[self.preview_box].set_rect(-9999.0, -9999.0, 0.0, 0.0);
             }
 
             if self.select_mode {
@@ -1066,15 +1030,15 @@ impl Application for TypefaceApp {
                 // right — the pane padding off the bar's rim, a pane gap apart —
                 // and vertically centered: the old row style.
                 let btn_h = cce_ui::layout::button_height();
-                let cancel_sz = self.select_cancel_btn.intrinsic_size()
+                let cancel_sz = self.ui_context[self.select_cancel_btn].intrinsic_size()
                     .unwrap_or(cce_ui::scene::layout::Size::new(80.0, btn_h));
-                let confirm_sz = self.select_confirm_btn.intrinsic_size()
+                let confirm_sz = self.ui_context[self.select_confirm_btn].intrinsic_size()
                     .unwrap_or(cce_ui::scene::layout::Size::new(80.0, btn_h));
                 let bar_w = w_f32 - 2.0 * inset;
                 let mut x = left_panel_x + bar_w - pad - confirm_sz.width;
-                self.select_confirm_btn.set_rect(x, bar_y + (select_bar_h - confirm_sz.height) / 2.0, confirm_sz.width, confirm_sz.height);
+                self.ui_context[self.select_confirm_btn].set_rect(x, bar_y + (select_bar_h - confirm_sz.height) / 2.0, confirm_sz.width, confirm_sz.height);
                 x -= gap + cancel_sz.width;
-                self.select_cancel_btn.set_rect(x, bar_y + (select_bar_h - cancel_sz.height) / 2.0, cancel_sz.width, cancel_sz.height);
+                self.ui_context[self.select_cancel_btn].set_rect(x, bar_y + (select_bar_h - cancel_sz.height) / 2.0, cancel_sz.width, cancel_sz.height);
             }
 
             self.refresh_widget_text();
@@ -1087,8 +1051,8 @@ impl Application for TypefaceApp {
         // display list below (not on an engine xdg popup), and a global registration would
         // spawn an empty popup surface (no render_popovers override here).
         self.ui_context.clear_popovers();
-        if self.selected_family.is_some() && self.style_dropdown.popover_rect().is_some() {
-            self.ui_context.register_popover(&mut self.style_dropdown);
+        if self.selected_family.is_some() && self.ui_context[self.style_dropdown].popover_rect().is_some() {
+            self.ui_context.register_popover_id(self.style_dropdown.id());
         }
 
         // 1. The window base, then the dissolved panels' plates and their children
@@ -1098,22 +1062,22 @@ impl Application for TypefaceApp {
         // The standard root plate (cce-ui PlateSpec::window).
         pc.root_plate(w_f32, h_f32);
         {
-            let self_ptr = self as *mut Self;
             // Left panel plate + children (the list's idle scrollbar under the plate).
             emit_region_idle_bar(&self.list_region, &mut pc);
             self.plate_prims(Rect { x: left_panel_x, y: panel_y, width: left_panel_w, height: content_h }, &mut pc);
-            unsafe {
-                cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).search_box, &mut pc);
+            {
+                let ui = &self.ui_context;
+                cce_ui::scene::painter::paint_root_into(ui, &ui[self.search_box], &mut pc);
                 // Rows under the list-viewport clip: `get_draw_y` returns
                 // PARTIALLY visible rows (toolkit ScrollRegion intersection
                 // contract), so an edge row renders cut instead of vanishing.
                 // (Its full rect can overlap the search box's hit area above;
                 // the router dispatches the search box first, so it wins.)
-                let lr = &(*self_ptr).list_region;
+                let lr = &self.list_region;
                 pc.push_clip(Rect { x: lr.x, y: lr.viewport_y, width: lr.w, height: lr.viewport_h });
-                for btn in (*self_ptr).font_buttons.iter_mut() {
-                    if btn.rect().0 > -9000.0 {
-                        cce_ui::scene::painter::paint_root_into(&self.ui_context, &*btn, &mut pc);
+                for &btn in &self.font_buttons {
+                    if ui[btn].rect().0 > -9000.0 {
+                        cce_ui::scene::painter::paint_root_into(ui, &ui[btn], &mut pc);
                     }
                 }
                 pc.pop_clip();
@@ -1124,20 +1088,22 @@ impl Application for TypefaceApp {
             }
             self.plate_prims(Rect { x: mid_panel_x, y: panel_y, width: mid_panel_w, height: content_h }, &mut pc);
             if self.selected_family.is_some() {
-                unsafe {
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_open_folder, &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).btn_remove_font, &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).style_dropdown, &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).size_spinbox, &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).preview_box, &mut pc);
+                {
+                    let ui = &self.ui_context;
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.btn_open_folder], &mut pc);
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.btn_remove_font], &mut pc);
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.style_dropdown], &mut pc);
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.size_spinbox], &mut pc);
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.preview_box], &mut pc);
                 }
             }
             // Bottom bar plate + children (select mode).
             if self.select_mode {
                 self.plate_prims(Rect { x: left_panel_x, y: bar_y, width: w_f32 - 2.0 * inset, height: select_bar_h }, &mut pc);
-                unsafe {
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).select_cancel_btn, &mut pc);
-                    cce_ui::scene::painter::paint_root_into(&self.ui_context, &(*self_ptr).select_confirm_btn, &mut pc);
+                {
+                    let ui = &self.ui_context;
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.select_cancel_btn], &mut pc);
+                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.select_confirm_btn], &mut pc);
                 }
             }
         }
@@ -1186,10 +1152,10 @@ impl Application for TypefaceApp {
         // 5. Style-dropdown popover — geometry and labels last, on top of everything. Its
         // labels carry bounds equal to the popover rect, which both clips them to the plate
         // and exempts them from the occlusion clamp (the is-overlay-text convention).
-        if self.selected_family.is_some() && self.style_dropdown.open {
+        if self.selected_family.is_some() && self.ui_context[self.style_dropdown].open {
             // PaintCtx is a RenderTarget: the popover draws its real prims (the
             // expanded inset-plate surface) with its own per-label bounds.
-            self.style_dropdown.render_popover(&mut pc);
+            self.ui_context[self.style_dropdown].render_popover(&mut pc);
         }
 
         Some(pc.finish())
@@ -1210,7 +1176,7 @@ impl Application for TypefaceApp {
             return;
         }
 
-        let old_size = self.preview_box.font_size;
+        let old_size = self.ui_context[self.preview_box].font_size;
 
         // The dissolved scroll regions: scrollbar-thumb drags and hover tracking.
         // Toolkit cursor_moved = the old drag_move + manual hover tracking.
@@ -1231,9 +1197,9 @@ impl Application for TypefaceApp {
             }
         }
 
-        let new_size = self.size_spinbox.value as f32;
+        let new_size = self.ui_context[self.size_spinbox].value as f32;
         if (new_size - old_size).abs() > 0.001 {
-            self.preview_box.font_size = new_size;
+            self.ui_context[self.preview_box].font_size = new_size;
             changed = true;
         }
 
@@ -1259,26 +1225,26 @@ impl Application for TypefaceApp {
                 self.needs_rebuild = true;
             }
             // A size pasted into the spinbox from the menu.
-            let new_size = self.size_spinbox.value as f32;
-            if (new_size - self.preview_box.font_size).abs() > 0.001 {
-                self.preview_box.font_size = new_size;
+            let new_size = self.ui_context[self.size_spinbox].value as f32;
+            if (new_size - self.ui_context[self.preview_box].font_size).abs() > 0.001 {
+                self.ui_context[self.preview_box].font_size = new_size;
                 return Some(AppMessage::FontSizeChanged);
             }
             return None;
         }
 
         if state == ElementState::Pressed && button == MouseButton::Left {
-            if !self.search_box.hit_test(px, py, &self.ui_context) {
-                self.ui_context.unfocus_widget(&mut self.search_box);
+            if !self.ui_context[self.search_box].hit_test(px, py, &self.ui_context) {
+                self.ui_context.unfocus_id(self.search_box.id());
                 changed = true;
             } else {
-                self.ui_context.set_focused(&mut self.search_box);
+                self.ui_context.set_focused_id(self.search_box.id());
             }
-            if !self.preview_box.hit_test(px, py, &self.ui_context) {
-                self.ui_context.unfocus_widget(&mut self.preview_box);
+            if !self.ui_context[self.preview_box].hit_test(px, py, &self.ui_context) {
+                self.ui_context.unfocus_id(self.preview_box.id());
                 changed = true;
             } else {
-                self.ui_context.set_focused(&mut self.preview_box);
+                self.ui_context.set_focused_id(self.preview_box.id());
             }
         }
 
@@ -1341,16 +1307,17 @@ impl Application for TypefaceApp {
             }
         }
 
-        if self.selected_family.is_some() && self.style_dropdown.take_change() {
-            msg_out = Some(AppMessage::SelectStyle(self.style_dropdown.selected));
+        if self.selected_family.is_some() && self.ui_context[self.style_dropdown].take_change() {
+            msg_out = Some(AppMessage::SelectStyle(self.ui_context[self.style_dropdown].selected));
         }
 
-        for (idx, btn) in self.font_buttons.iter_mut().enumerate() {
+        for idx in 0..self.font_buttons.len() {
+            let btn = &mut self.ui_context[self.font_buttons[idx]];
             if btn.rect().0 > -9000.0 && btn.take_click() {
                 let double = self.last_click_at.is_some_and(|t| t.elapsed() < DOUBLE_CLICK);
                 if self.select_mode && self.last_click_idx == Some(idx) && double {
                     let selected = self.filtered[idx].clone();
-                    print!("{} {}", selected, self.size_spinbox.value);
+                    print!("{} {}", selected, self.ui_context[self.size_spinbox].value);
                     use std::io::Write;
                     let _ = std::io::stdout().flush();
                     std::process::exit(0);
@@ -1362,27 +1329,27 @@ impl Application for TypefaceApp {
             }
         }
 
-        let old_size = self.preview_box.font_size;
-        let new_size = self.size_spinbox.value as f32;
+        let old_size = self.ui_context[self.preview_box].font_size;
+        let new_size = self.ui_context[self.size_spinbox].value as f32;
         if (new_size - old_size).abs() > 0.001 {
-            self.preview_box.font_size = new_size;
+            self.ui_context[self.preview_box].font_size = new_size;
             msg_out = Some(AppMessage::FontSizeChanged);
         }
 
-        if self.btn_open_folder.take_click() {
+        if self.ui_context[self.btn_open_folder].take_click() {
             msg_out = Some(AppMessage::OpenFolder);
         }
-        if self.btn_remove_font.take_click() {
+        if self.ui_context[self.btn_remove_font].take_click() {
             msg_out = Some(AppMessage::RemoveFont);
         }
 
         if self.select_mode {
-            if self.select_cancel_btn.take_click() {
+            if self.ui_context[self.select_cancel_btn].take_click() {
                 std::process::exit(1);
             }
-            if self.select_confirm_btn.take_click() {
+            if self.ui_context[self.select_confirm_btn].take_click() {
                 let selected = self.selected_family.clone().unwrap_or_default();
-                print!("{} {}", selected, self.size_spinbox.value);
+                print!("{} {}", selected, self.ui_context[self.size_spinbox].value);
                 use std::io::Write;
                 let _ = std::io::stdout().flush();
                 std::process::exit(0);
@@ -1434,14 +1401,14 @@ impl Application for TypefaceApp {
                 msg_out = Some(AppMessage::RefreshFonts);
                 handled = true;
             } else if m(&self.keys.open_search) {
-                self.ui_context.focus_widget(&mut self.search_box);
-                self.ui_context.set_focused(&mut self.search_box);
-                self.ui_context.unfocus_widget(&mut self.preview_box);
+                self.ui_context.focus_id(self.search_box.id());
+                self.ui_context.set_focused_id(self.search_box.id());
+                self.ui_context.unfocus_id(self.preview_box.id());
                 handled = true;
             } else if m(&self.keys.focus_preview) {
-                self.ui_context.focus_widget(&mut self.preview_box);
-                self.ui_context.set_focused(&mut self.preview_box);
-                self.ui_context.unfocus_widget(&mut self.search_box);
+                self.ui_context.focus_id(self.preview_box.id());
+                self.ui_context.set_focused_id(self.preview_box.id());
+                self.ui_context.unfocus_id(self.search_box.id());
                 handled = true;
             } else if m(&self.keys.open_folder) {
                 msg_out = Some(AppMessage::OpenFolder);
@@ -1456,11 +1423,11 @@ impl Application for TypefaceApp {
             match event.logical_key {
                 Key::Character(ref ch) if ch == "+" || ch == "=" => {
                     if self.selected_family.is_some() {
-                        let (_, max) = self.size_spinbox.range();
-                        let old_val = self.size_spinbox.value;
-                        self.size_spinbox.value = (self.size_spinbox.value + 2).min(max);
-                        if self.size_spinbox.value != old_val && self.size_spinbox.editing {
-                            self.size_spinbox.edit_buffer = self.size_spinbox.value.to_string();
+                        let (_, max) = self.ui_context[self.size_spinbox].range();
+                        let old_val = self.ui_context[self.size_spinbox].value;
+                        self.ui_context[self.size_spinbox].value = (self.ui_context[self.size_spinbox].value + 2).min(max);
+                        if self.ui_context[self.size_spinbox].value != old_val && self.ui_context[self.size_spinbox].editing {
+                            self.ui_context[self.size_spinbox].edit_buffer = self.ui_context[self.size_spinbox].value.to_string();
                         }
                         msg_out = Some(AppMessage::FontSizeChanged);
                         handled = true;
@@ -1468,11 +1435,11 @@ impl Application for TypefaceApp {
                 }
                 Key::Character(ref ch) if ch == "-" => {
                     if self.selected_family.is_some() {
-                        let (min, _) = self.size_spinbox.range();
-                        let old_val = self.size_spinbox.value;
-                        self.size_spinbox.value = (self.size_spinbox.value - 2).max(min);
-                        if self.size_spinbox.value != old_val && self.size_spinbox.editing {
-                            self.size_spinbox.edit_buffer = self.size_spinbox.value.to_string();
+                        let (min, _) = self.ui_context[self.size_spinbox].range();
+                        let old_val = self.ui_context[self.size_spinbox].value;
+                        self.ui_context[self.size_spinbox].value = (self.ui_context[self.size_spinbox].value - 2).max(min);
+                        if self.ui_context[self.size_spinbox].value != old_val && self.ui_context[self.size_spinbox].editing {
+                            self.ui_context[self.size_spinbox].edit_buffer = self.ui_context[self.size_spinbox].value.to_string();
                         }
                         msg_out = Some(AppMessage::FontSizeChanged);
                         handled = true;
@@ -1482,7 +1449,7 @@ impl Application for TypefaceApp {
             }
         }
 
-        if !handled && !self.style_dropdown.open {
+        if !handled && !self.ui_context[self.style_dropdown].open {
             // Arrow navigation — family list only while no dropdown is open:
             // an open style dropdown takes the arrows for its own hover (via
             // the propagate loop below), and consuming them here left it
@@ -1510,7 +1477,7 @@ impl Application for TypefaceApp {
 
         // TextBox and other focused widgets input propagation
         if !handled {
-            let old_search_text = if self.search_box.editing { self.search_box.edit_buffer.clone() } else { self.search_box.text.clone() };
+            let old_search_text = if self.ui_context[self.search_box].editing { self.ui_context[self.search_box].edit_buffer.clone() } else { self.ui_context[self.search_box].text.clone() };
             
             // Routed (6bd shrink); short-circuits on the first handler — the router
             // delivers KeyInput to the focused widget first on EVERY call (the 6ac trap).
@@ -1529,7 +1496,7 @@ impl Application for TypefaceApp {
             }
 
             if handled {
-                let new_search_text = if self.search_box.editing { &self.search_box.edit_buffer } else { &self.search_box.text };
+                let new_search_text = if self.ui_context[self.search_box].editing { &self.ui_context[self.search_box].edit_buffer } else { &self.ui_context[self.search_box].text };
                 if old_search_text != *new_search_text {
                     msg_out = Some(AppMessage::SearchChanged);
                 }
