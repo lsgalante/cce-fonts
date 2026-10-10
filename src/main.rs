@@ -1179,8 +1179,8 @@ impl Application for TypefaceApp {
 
     fn handle_pointer_move(&mut self, pos: LogicalPosition, needs_rebuild: &mut bool) {
         let mut changed = false;
-        let px = pos.x as f32;
-        let py = pos.y as f32;
+        let px = pos.x;
+        let py = pos.y;
 
         // The shared context menu gets the pointer to itself while open (its
         // row highlight), as it gets the clicks (`handle_mouse_input`).
@@ -1228,8 +1228,8 @@ impl Application for TypefaceApp {
     fn handle_mouse_input(&mut self, button: MouseButton, state: ElementState, pos: LogicalPosition, needs_rebuild: &mut bool) -> Option<Self::Message> {
         let mut changed = false;
         let mut msg_out = None;
-        let px = pos.x as f32;
-        let py = pos.y as f32;
+        let px = pos.x;
+        let py = pos.y;
 
         // The toolkit's shared context menu (the size spinbox's, the text boxes')
         // takes every click while it is open: a row runs its action, a press
@@ -1292,13 +1292,11 @@ impl Application for TypefaceApp {
             if input_handled {
                 break;
             }
-            let has_popover = self.ui_context.get_widget(root).map_or(false, |w| w.popover_rect().is_some());
-            if has_popover {
-                if self.ui_context.propagate_event(&ev, root) {
-                    changed = true;
-                    input_handled = true;
-                    break;
-                }
+            let has_popover = self.ui_context.get_widget(root).is_some_and(|w| w.popover_rect().is_some());
+            if has_popover && self.ui_context.propagate_event(&ev, root) {
+                changed = true;
+                input_handled = true;
+                break;
             }
         }
         if !input_handled {
@@ -1308,7 +1306,7 @@ impl Application for TypefaceApp {
                     break;
                 }
                 if state == ElementState::Pressed {
-                    let missed = self.ui_context.get_widget(root).map_or(false, |w| !w.hit_test(px, py, &self.ui_context));
+                    let missed = self.ui_context.get_widget(root).is_some_and(|w| !w.hit_test(px, py, &self.ui_context));
                     if missed {
                         // The window's focus lets go of it too (`UiContext::unfocus_widget`,
                         // done in two steps since the widget is borrowed from the context).
@@ -1382,8 +1380,8 @@ impl Application for TypefaceApp {
 
     fn handle_mouse_wheel(&mut self, delta: &MouseScrollDelta, pos: LogicalPosition, needs_rebuild: &mut bool) {
         let mut changed = false;
-        let px = pos.x as f32;
-        let py = pos.y as f32;
+        let px = pos.x;
+        let py = pos.y;
 
         if self.list_region.wheel(delta, px, py) {
             changed = true;
@@ -1449,17 +1447,15 @@ impl Application for TypefaceApp {
                         handled = true;
                     }
                 }
-                Key::Character(ref ch) if ch == "-" => {
-                    if self.selected_family.is_some() {
-                        let (min, _) = self.ui_context[self.size_spinbox].range();
-                        let old_val = self.ui_context[self.size_spinbox].value;
-                        self.ui_context[self.size_spinbox].value = (self.ui_context[self.size_spinbox].value - 2).max(min);
-                        if self.ui_context[self.size_spinbox].value != old_val && self.ui_context[self.size_spinbox].editing {
-                            self.ui_context[self.size_spinbox].edit_buffer = self.ui_context[self.size_spinbox].value.to_string();
-                        }
-                        msg_out = Some(AppMessage::FontSizeChanged);
-                        handled = true;
+                Key::Character(ref ch) if ch == "-" && self.selected_family.is_some() => {
+                    let (min, _) = self.ui_context[self.size_spinbox].range();
+                    let old_val = self.ui_context[self.size_spinbox].value;
+                    self.ui_context[self.size_spinbox].value = (self.ui_context[self.size_spinbox].value - 2).max(min);
+                    if self.ui_context[self.size_spinbox].value != old_val && self.ui_context[self.size_spinbox].editing {
+                        self.ui_context[self.size_spinbox].edit_buffer = self.ui_context[self.size_spinbox].value.to_string();
                     }
+                    msg_out = Some(AppMessage::FontSizeChanged);
+                    handled = true;
                 }
                 _ => {}
             }

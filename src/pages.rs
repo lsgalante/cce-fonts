@@ -38,7 +38,7 @@ pub fn fetch_fonts() -> Vec<FontEntry> {
         .collect();
 
     // Deduped by the caller, which first drops the faces it cannot render.
-    fonts.sort_by(|a, b| a.family.to_lowercase().cmp(&b.family.to_lowercase()));
+    fonts.sort_by_key(|a| a.family.to_lowercase());
     fonts
 }
 
@@ -66,7 +66,7 @@ pub fn count_chars(file: &str) -> usize {
                             count += (e_val - s_val + 1) as usize;
                         }
                     }
-                } else if let Ok(_) = u32::from_str_radix(range, 16) {
+                } else if u32::from_str_radix(range, 16).is_ok() {
                     count += 1;
                 }
             }
