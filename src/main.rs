@@ -35,6 +35,18 @@ const LATIN_SAMPLE: [&str; 4] = [
 const COVERAGE_LINES: usize = 4;
 const COVERAGE_LINE_CHARS: usize = 16;
 
+/// Spawn `cmd` and reap it on a background thread, so the child never lingers
+/// as a zombie once it exits. The same helper cce-mail, cce-files, cce-terminal
+/// and cce-system-interface each keep; cce-ui's shared `process::spawn_detached`
+/// went away in cce-ui 4e94236.
+fn spawn_detached(mut cmd: std::process::Command) -> std::io::Result<()> {
+    let mut child = cmd.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 fn latin_sample() -> Vec<String> {
     LATIN_SAMPLE.iter().map(|l| l.to_string()).collect()
 }
@@ -868,7 +880,9 @@ impl Application for TypefaceApp {
             AppMessage::OpenFolder => {
                 if let Some(ref file) = self.selected_file {
                     if let Some(parent) = std::path::Path::new(file).parent() {
-                        let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+                        let mut open = std::process::Command::new("xdg-open");
+                        open.arg(parent);
+                        let _ = spawn_detached(open);
                     }
                 }
             }
@@ -877,7 +891,9 @@ impl Application for TypefaceApp {
                     if self.is_user_font {
                         // Waited for: the rescan must find the file gone.
                         let _ = std::process::Command::new("gio").args(["trash", file]).status();
-                        let _ = std::process::Command::new("fc-cache").arg("-f").spawn();
+                        let mut fc_cache = std::process::Command::new("fc-cache");
+                        fc_cache.arg("-f");
+                        let _ = spawn_detached(fc_cache);
                         self.rescan_fonts();
                         *needs_rebuild = true;
                         self.needs_rebuild = true;
