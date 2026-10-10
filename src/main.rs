@@ -1072,7 +1072,7 @@ impl Application for TypefaceApp {
             self.plate_prims(Rect { x: left_panel_x, y: panel_y, width: left_panel_w, height: content_h }, &mut pc);
             {
                 let ui = &self.ui_context;
-                cce_ui::scene::painter::paint_root_into(ui, &ui[self.search_box], &mut pc);
+                cce_ui::widget::painter::paint_root_into(ui, &ui[self.search_box], &mut pc);
                 // Rows under the list-viewport clip: `get_draw_y` returns
                 // PARTIALLY visible rows (toolkit ScrollRegion intersection
                 // contract), so an edge row renders cut instead of vanishing.
@@ -1082,7 +1082,7 @@ impl Application for TypefaceApp {
                 pc.push_clip(Rect { x: lr.x, y: lr.viewport_y, width: lr.w, height: lr.viewport_h });
                 for &btn in &self.font_buttons {
                     if ui[btn].rect().0 > -9000.0 {
-                        cce_ui::scene::painter::paint_root_into(ui, &ui[btn], &mut pc);
+                        cce_ui::widget::painter::paint_root_into(ui, &ui[btn], &mut pc);
                     }
                 }
                 pc.pop_clip();
@@ -1095,11 +1095,11 @@ impl Application for TypefaceApp {
             if self.selected_family.is_some() {
                 {
                     let ui = &self.ui_context;
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.btn_open_folder], &mut pc);
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.btn_remove_font], &mut pc);
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.style_dropdown], &mut pc);
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.size_spinbox], &mut pc);
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.preview_box], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.btn_open_folder], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.btn_remove_font], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.style_dropdown], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.size_spinbox], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.preview_box], &mut pc);
                 }
             }
             // Bottom bar plate + children (select mode).
@@ -1107,8 +1107,8 @@ impl Application for TypefaceApp {
                 self.plate_prims(Rect { x: left_panel_x, y: bar_y, width: w_f32 - 2.0 * inset, height: select_bar_h }, &mut pc);
                 {
                     let ui = &self.ui_context;
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.select_cancel_btn], &mut pc);
-                    cce_ui::scene::painter::paint_root_into(ui, &ui[self.select_confirm_btn], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.select_cancel_btn], &mut pc);
+                    cce_ui::widget::painter::paint_root_into(ui, &ui[self.select_confirm_btn], &mut pc);
                 }
             }
         }
