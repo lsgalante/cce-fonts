@@ -1,5 +1,6 @@
 mod pages;
 
+use cce_ui::process::spawn_detached;
 use cce_ui::widget::Handle;
 use cce_ui::cosmic_text::FontSystem;
 use cce_ui::engine::{Application, LogicalPosition, LogicalSize, WindowSettings};
@@ -34,18 +35,6 @@ const LATIN_SAMPLE: [&str; 4] = [
 /// how many characters on each.
 const COVERAGE_LINES: usize = 4;
 const COVERAGE_LINE_CHARS: usize = 16;
-
-/// Spawn `cmd` and reap it on a background thread, so the child never lingers
-/// as a zombie once it exits. The same helper cce-mail, cce-files, cce-terminal
-/// and cce-system-interface each keep; cce-ui's shared `process::spawn_detached`
-/// went away in cce-ui 4e94236.
-fn spawn_detached(mut cmd: std::process::Command) -> std::io::Result<()> {
-    let mut child = cmd.spawn()?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
-}
 
 fn latin_sample() -> Vec<String> {
     LATIN_SAMPLE.iter().map(|l| l.to_string()).collect()
