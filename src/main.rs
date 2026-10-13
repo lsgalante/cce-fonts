@@ -1238,7 +1238,7 @@ impl Application for TypefaceApp {
         // labels carry bounds equal to the popover rect, which both clips them to the plate
         // and exempts them from the occlusion clamp (the is-overlay-text convention).
         if self.selected_family.is_some() && self.ui_context[self.style_dropdown].open {
-            // PaintCtx is a RenderTarget: the popover draws its real prims (the
+            // The popover paints into the frame's PaintCtx: its real prims (the
             // expanded inset-plate surface) with its own per-label bounds.
             self.ui_context[self.style_dropdown].render_popover(&mut pc);
         }
