@@ -5,7 +5,7 @@ use cce_ui::widget::Handle;
 use cce_ui::cosmic_text::FontSystem;
 use cce_ui::engine::{Application, LogicalPosition, LogicalSize, WindowSettings};
 use cce_ui::widget::{
-    MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost, Event,
+    MouseButton, ElementState, MouseScrollDelta, KeyEvent, WidgetHost, Event, WidgetEvent,
     TextBox, Button, Key, NamedKey, Dropdown, Spinbox, ScrollRegion,
 };
 
@@ -370,6 +370,81 @@ impl TypefaceApp {
             v.reverse();
         }
         v
+    }
+
+    /// Answer what the widgets reported since the last sweep
+    /// (`UiContext::take_events`) with the message it means. Run after the
+    /// pointer press/release, every key and `tick`.
+    ///
+    /// The rules the old per-widget polls applied stay: a style pick counts
+    /// only while a family is shown; a family row counts only on screen (rows
+    /// out of view are parked at the -9999 sentinel), and of several the
+    /// first; when a pick and a button land together the later poll's message
+    /// wins (style, family, Open Folder, Remove Font). What a rule turns away
+    /// is dropped with the sweep, where a poll left it pending to fire at some
+    /// later click. A second click on the same row within `DOUBLE_CLICK`
+    /// confirms in `--select` mode, timed when the click is answered, as
+    /// before; a keyboard activation is now answered (and timed) at the key
+    /// rather than at the next pointer press.
+    fn drain_widget_events(&mut self) -> Option<AppMessage> {
+        let (mut style, mut family) = (None, None::<usize>);
+        let (mut open_folder, mut remove_font, mut cancel, mut confirm) = (false, false, false, false);
+        for (id, ev) in self.ui_context.take_events() {
+            match ev {
+                WidgetEvent::Changed if id == self.style_dropdown.id() => {
+                    if self.selected_family.is_some() {
+                        style = Some(self.ui_context[self.style_dropdown].selected);
+                    }
+                }
+                WidgetEvent::Clicked if id == self.btn_open_folder.id() => open_folder = true,
+                WidgetEvent::Clicked if id == self.btn_remove_font.id() => remove_font = true,
+                WidgetEvent::Clicked if id == self.select_cancel_btn.id() => cancel = true,
+                WidgetEvent::Clicked if id == self.select_confirm_btn.id() => confirm = true,
+                WidgetEvent::Clicked => {
+                    if let Some(idx) = self.font_buttons.iter().position(|h| h.id() == id) {
+                        let on_screen = self.ui_context[self.font_buttons[idx]].rect().0 > -9000.0;
+                        if on_screen && family.is_none_or(|first| idx < first) {
+                            family = Some(idx);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut msg = style.map(AppMessage::SelectStyle);
+        if let Some(idx) = family {
+            let double = self.last_click_at.is_some_and(|t| t.elapsed() < DOUBLE_CLICK);
+            if self.select_mode && self.last_click_idx == Some(idx) && double {
+                let selected = self.filtered[idx].clone();
+                print!("{} {}", selected, self.ui_context[self.size_spinbox].value);
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                std::process::exit(0);
+            }
+            self.last_click_idx = Some(idx);
+            self.last_click_at = Some(std::time::Instant::now());
+            msg = Some(AppMessage::SelectFamily(idx));
+        }
+        if open_folder {
+            msg = Some(AppMessage::OpenFolder);
+        }
+        if remove_font {
+            msg = Some(AppMessage::RemoveFont);
+        }
+        if self.select_mode {
+            if cancel {
+                std::process::exit(1);
+            }
+            if confirm {
+                let selected = self.selected_family.clone().unwrap_or_default();
+                print!("{} {}", selected, self.ui_context[self.size_spinbox].value);
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                std::process::exit(0);
+            }
+        }
+        msg
     }
 
     /// Pick up fonts installed or removed since launch: the font database is
@@ -919,6 +994,11 @@ impl Application for TypefaceApp {
             self.needs_rebuild = true;
         }
 
+        // What arrived between inputs (an assistive tool's SetValue, a
+        // context-menu Paste on the style menu).
+        if let Some(msg) = self.drain_widget_events() {
+            self.update(msg, needs_rebuild, &mut false);
+        }
     }
 
     fn display_list(&mut self, size: LogicalSize, scale: f64) -> Option<cce_ui::scene::paint::DisplayList> {
@@ -1310,28 +1390,6 @@ impl Application for TypefaceApp {
             }
         }
 
-        if self.selected_family.is_some() && self.ui_context[self.style_dropdown].take_change() {
-            msg_out = Some(AppMessage::SelectStyle(self.ui_context[self.style_dropdown].selected));
-        }
-
-        for idx in 0..self.font_buttons.len() {
-            let btn = &mut self.ui_context[self.font_buttons[idx]];
-            if btn.rect().0 > -9000.0 && btn.take_click() {
-                let double = self.last_click_at.is_some_and(|t| t.elapsed() < DOUBLE_CLICK);
-                if self.select_mode && self.last_click_idx == Some(idx) && double {
-                    let selected = self.filtered[idx].clone();
-                    print!("{} {}", selected, self.ui_context[self.size_spinbox].value);
-                    use std::io::Write;
-                    let _ = std::io::stdout().flush();
-                    std::process::exit(0);
-                }
-                self.last_click_idx = Some(idx);
-                self.last_click_at = Some(std::time::Instant::now());
-                msg_out = Some(AppMessage::SelectFamily(idx));
-                break;
-            }
-        }
-
         let old_size = self.ui_context[self.preview_box].font_size;
         let new_size = self.ui_context[self.size_spinbox].value as f32;
         if (new_size - old_size).abs() > 0.001 {
@@ -1339,24 +1397,10 @@ impl Application for TypefaceApp {
             msg_out = Some(AppMessage::FontSizeChanged);
         }
 
-        if self.ui_context[self.btn_open_folder].take_click() {
-            msg_out = Some(AppMessage::OpenFolder);
-        }
-        if self.ui_context[self.btn_remove_font].take_click() {
-            msg_out = Some(AppMessage::RemoveFont);
-        }
-
-        if self.select_mode {
-            if self.ui_context[self.select_cancel_btn].take_click() {
-                std::process::exit(1);
-            }
-            if self.ui_context[self.select_confirm_btn].take_click() {
-                let selected = self.selected_family.clone().unwrap_or_default();
-                print!("{} {}", selected, self.ui_context[self.size_spinbox].value);
-                use std::io::Write;
-                let _ = std::io::stdout().flush();
-                std::process::exit(0);
-            }
+        // A widget's report outranks the size: the size is already on the
+        // preview box, and the pick re-syncs its font.
+        if let Some(msg) = self.drain_widget_events() {
+            msg_out = Some(msg);
         }
 
         if changed {
@@ -1501,6 +1545,17 @@ impl Application for TypefaceApp {
                 if old_search_text != *new_search_text {
                     msg_out = Some(AppMessage::SearchChanged);
                 }
+            }
+        }
+
+        // A key clicks a focused button or picks in the open style menu (an
+        // assistive tool's Click arrives as one): answer it now, not at the
+        // next pointer press.
+        if let Some(msg) = self.drain_widget_events() {
+            handled = true;
+            match msg_out {
+                None => msg_out = Some(msg),
+                Some(_) => self.update(msg, needs_rebuild, &mut false),
             }
         }
 
