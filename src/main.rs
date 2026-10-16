@@ -1416,10 +1416,13 @@ impl Application for TypefaceApp {
         let px = pos.x;
         let py = pos.y;
 
-        if self.list_region.wheel(delta, px, py) {
+        // The lists take part in the scroll-gesture rule (`wheel_in`): one
+        // that moves claims the gesture, so the controls below decline the
+        // rest of it, and a gesture a control took leaves the lists alone.
+        if self.list_region.wheel_in(delta, px, py, &mut self.ui_context) {
             changed = true;
         }
-        if self.selected_family.is_some() && self.mid_region.wheel(delta, px, py) {
+        if self.selected_family.is_some() && self.mid_region.wheel_in(delta, px, py, &mut self.ui_context) {
             changed = true;
         }
         // Routed (6bd shrink): every roster root sees the wheel, as the legacy
