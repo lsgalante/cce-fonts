@@ -199,13 +199,13 @@ struct FontsKeys {
 
 impl FontsKeys {
     fn load() -> Self {
-        let get = cce_ui::input::app_chord;
+        let get = cce_ui::input::app_shortcut;
         Self {
-            refresh: get("refresh", "ctrl+r"),
-            open_search: get("open_search", "ctrl+f"),
-            focus_preview: get("focus_preview", "ctrl+e"),
-            open_folder: get("open_folder", "ctrl+o"),
-            remove_font: get("remove_font", "delete"),
+            refresh: get("refresh", "ctrl+r", "Rescan installed fonts"),
+            open_search: get("open_search", "ctrl+f", "Search fonts"),
+            focus_preview: get("focus_preview", "ctrl+e", "Edit the preview text"),
+            open_folder: get("open_folder", "ctrl+o", "Open the fonts folder"),
+            remove_font: get("remove_font", "delete", "Remove the selected font"),
         }
     }
 }
